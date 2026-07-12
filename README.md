@@ -10,7 +10,9 @@ Grab the installer from [Releases](../../releases), run it, done. No accounts, n
 
 > **First run:** Windows SmartScreen shows "Windows protected your PC" because the installer isn't code-signed. Click **More info → Run anyway**. That's normal for unsigned indie tools.
 
-## What it cleans
+## Two tabs
+
+**Clean** — pick categories, see real sizes, delete only what you check:
 
 | Group | Categories |
 |---|---|
@@ -19,6 +21,8 @@ Grab the installer from [Releases](../../releases), run it, done. No accounts, n
 | Developer | npm cache, pip cache, Cargo registry cache |
 
 Categories that don't exist on your PC show as "Not found" and are left alone. Shader caches rebuild automatically — first game launch afterward is slightly slower, then back to normal.
+
+**Space** — maps where your disk actually went. Pick a drive, get a used/free bar and a ranked list of the biggest folders (the "space hotspots"), then drill in or open any folder in Explorer. Full 2 TB drive scans in under 20 seconds. **View-only — the Space tab never deletes anything.**
 
 ## Safety rules (baked into the core)
 

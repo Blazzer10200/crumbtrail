@@ -1,9 +1,12 @@
 mod categories;
 mod engine;
+mod space;
 
 use categories::{build_categories, CategoryInfo};
 use engine::{clean_category, is_elevated, scan_category, CleanResult};
-use tauri::{AppHandle, Emitter};
+use space::SpaceState;
+use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[tauri::command]
 fn get_categories() -> Vec<CategoryInfo> {
@@ -64,6 +67,49 @@ fn clean(app: AppHandle, ids: Vec<String>) {
 }
 
 #[tauri::command]
+fn drives() -> Vec<space::DriveInfo> {
+    space::list_drives()
+}
+
+#[tauri::command]
+fn space_scan(app: AppHandle, root: String) {
+    std::thread::spawn(move || {
+        let root = PathBuf::from(root);
+        let app2 = app.clone();
+        let scan = space::scan_root(&root, move |files, bytes| {
+            let _ = app2.emit(
+                "space:progress",
+                serde_json::json!({ "files": files, "bytes": bytes }),
+            );
+        });
+        let payload = serde_json::json!({
+            "root": scan.root.display().to_string(),
+            "files": scan.files,
+            "bytes": scan.bytes,
+            "hotspots": space::hotspots(&scan),
+            "top": space::children_of(&scan, &scan.root),
+        });
+        *app.state::<SpaceState>().0.lock().unwrap() = Some(scan);
+        let _ = app.emit("space:done", payload);
+    });
+}
+
+#[tauri::command]
+fn space_children(state: State<SpaceState>, dir: String) -> Vec<space::FolderEntry> {
+    match &*state.0.lock().unwrap() {
+        Some(scan) => space::children_of(scan, Path::new(&dir)),
+        None => Vec::new(),
+    }
+}
+
+#[tauri::command]
+fn reveal(path: String) {
+    if Path::new(&path).is_dir() {
+        let _ = std::process::Command::new("explorer").arg(&path).spawn();
+    }
+}
+
+#[tauri::command]
 fn relaunch_admin(app: AppHandle) {
     if let Ok(exe) = std::env::current_exe() {
         let _ = std::process::Command::new("powershell")
@@ -81,7 +127,7 @@ fn relaunch_admin(app: AppHandle) {
 
 fn write_log(lines: &[String]) -> String {
     let dir = std::env::var_os("LOCALAPPDATA")
-        .map(std::path::PathBuf::from)
+        .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join("Sweep")
         .join("logs");
@@ -98,11 +144,16 @@ fn write_log(lines: &[String]) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(SpaceState::default())
         .invoke_handler(tauri::generate_handler![
             get_categories,
             elevated,
             scan,
             clean,
+            drives,
+            space_scan,
+            space_children,
+            reveal,
             relaunch_admin
         ])
         .run(tauri::generate_context!())

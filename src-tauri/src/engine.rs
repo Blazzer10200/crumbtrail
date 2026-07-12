@@ -96,51 +96,11 @@ pub fn clean_category(cat: &Category, log: &mut Vec<String>) -> CleanResult {
             let mut deleted = 0u64;
             let mut skipped = 0u64;
             for root in &cat.paths {
-                for entry in WalkDir::new(root)
-                    .follow_links(false)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                {
-                    if !entry.file_type().is_file() || entry.path_is_symlink() {
-                        continue;
-                    }
-                    if !name_matches(&entry.file_name().to_string_lossy(), cat.file_prefixes) {
-                        continue;
-                    }
-                    let Ok(meta) = entry.metadata() else {
-                        skipped += 1;
-                        continue;
-                    };
-                    if too_new(&meta, cat.age_hours) {
-                        continue;
-                    }
-                    match fs::remove_file(entry.path()) {
-                        Ok(()) => {
-                            freed += meta.len();
-                            deleted += 1;
-                            log.push(format!("[{}] del {}", cat.id, entry.path().display()));
-                        }
-                        // Locked / in use / permission denied — skip, never force.
-                        Err(_) => skipped += 1,
-                    }
-                }
-                // Prune now-empty subdirectories (never the root itself).
-                // remove_dir fails on non-empty dirs, which is exactly what we want.
-                if cat.file_prefixes.is_none() {
-                    for entry in WalkDir::new(root)
-                        .follow_links(false)
-                        .contents_first(true)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                    {
-                        if entry.file_type().is_dir()
-                            && !entry.path_is_symlink()
-                            && entry.path() != root.as_path()
-                        {
-                            let _ = fs::remove_dir(entry.path());
-                        }
-                    }
-                }
+                let (f, d, s) =
+                    delete_tree(root, cat.age_hours, cat.file_prefixes, log, cat.id);
+                freed += f;
+                deleted += d;
+                skipped += s;
             }
             log.push(format!(
                 "[{}] freed {} bytes, deleted {}, skipped {}",
@@ -149,6 +109,66 @@ pub fn clean_category(cat: &Category, log: &mut Vec<String>) -> CleanResult {
             CleanResult { id: cat.id, freed_bytes: freed, deleted, skipped }
         }
     }
+}
+
+// Shared deletion core — same safety rules everywhere: files only, symlinks
+// never followed or deleted-through, locked files skipped, root dir kept.
+pub fn delete_tree(
+    root: &std::path::Path,
+    age_hours: Option<u64>,
+    prefixes: Option<&[&str]>,
+    log: &mut Vec<String>,
+    tag: &str,
+) -> (u64, u64, u64) {
+    let mut freed = 0u64;
+    let mut deleted = 0u64;
+    let mut skipped = 0u64;
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() || entry.path_is_symlink() {
+            continue;
+        }
+        if !name_matches(&entry.file_name().to_string_lossy(), prefixes) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            skipped += 1;
+            continue;
+        };
+        if too_new(&meta, age_hours) {
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => {
+                freed += meta.len();
+                deleted += 1;
+                log.push(format!("[{}] del {}", tag, entry.path().display()));
+            }
+            // Locked / in use / permission denied — skip, never force.
+            Err(_) => skipped += 1,
+        }
+    }
+    // Prune now-empty subdirectories (never the root itself).
+    // remove_dir fails on non-empty dirs, which is exactly what we want.
+    if prefixes.is_none() {
+        for entry in WalkDir::new(root)
+            .follow_links(false)
+            .contents_first(true)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_dir()
+                && !entry.path_is_symlink()
+                && entry.path() != root
+            {
+                let _ = fs::remove_dir(entry.path());
+            }
+        }
+    }
+    (freed, deleted, skipped)
 }
 
 fn recycle_bin_query() -> (u64, u64) {

@@ -14,13 +14,18 @@
   };
   type ScanRes = { id: string; bytes: number; files: number };
   type CleanRes = { id: string; freed_bytes: number; deleted: number; skipped: number };
+  type Drive = { letter: string; total: number; free: number };
+  type Folder = { path: string; name: string; bytes: number };
 
+  let tab = $state<"clean" | "space">("clean");
+  let admin = $state(false);
+
+  // ---- Clean tab ----
   let cats = $state<Cat[]>([]);
   let sizes = $state<Record<string, ScanRes>>({});
   let checked = $state<Record<string, boolean>>({});
   let scanning = $state(false);
   let cleaning = $state(false);
-  let admin = $state(false);
   let confirmOpen = $state(false);
   let cleanSkipped = $state(0);
   let result = $state<{ total: number; skipped: number; logPath: string } | null>(null);
@@ -39,6 +44,20 @@
     cats.filter((c) => checked[c.id] && c.risk === "care" && (sizes[c.id]?.bytes ?? 0) > 0)
   );
   const busy = $derived(scanning || cleaning);
+
+  // ---- Space tab ----
+  let drives = $state<Drive[]>([]);
+  let spaceScanning = $state(false);
+  let spaceProgress = $state<{ files: number; bytes: number } | null>(null);
+  let spaceResult = $state<{
+    root: string;
+    files: number;
+    bytes: number;
+    hotspots: Folder[];
+    top: Folder[];
+  } | null>(null);
+  let crumbs = $state<{ path: string; name: string }[]>([]);
+  let browseEntries = $state<Folder[]>([]);
 
   function fmt(b: number): string {
     if (b >= 1024 ** 3) return (b / 1024 ** 3).toFixed(2) + " GB";
@@ -59,11 +78,8 @@
   }
 
   function requestClean() {
-    if (careSelected.length > 0) {
-      confirmOpen = true;
-    } else {
-      doClean();
-    }
+    if (careSelected.length > 0) confirmOpen = true;
+    else doClean();
   }
 
   async function doClean() {
@@ -73,8 +89,31 @@
     await invoke("clean", { ids: selectedIds });
   }
 
-  async function relaunchAdmin() {
-    await invoke("relaunch_admin");
+  async function scanDrive(letter: string) {
+    spaceResult = null;
+    crumbs = [];
+    browseEntries = [];
+    spaceProgress = null;
+    spaceScanning = true;
+    await invoke("space_scan", { root: letter + "\\" });
+  }
+
+  async function drillInto(f: Folder) {
+    const entries = await invoke<Folder[]>("space_children", { dir: f.path });
+    if (entries.length === 0) return;
+    crumbs = [...crumbs, { path: f.path, name: f.name }];
+    browseEntries = entries;
+  }
+
+  async function jumpTo(index: number) {
+    if (index < 0) {
+      crumbs = [];
+      browseEntries = spaceResult ? spaceResult.top : [];
+      return;
+    }
+    const target = crumbs[index];
+    crumbs = crumbs.slice(0, index + 1);
+    browseEntries = await invoke<Folder[]>("space_children", { dir: target.path });
   }
 
   onMount(() => {
@@ -82,10 +121,9 @@
     (async () => {
       admin = await invoke<boolean>("elevated");
       cats = await invoke<Cat[]>("get_categories");
+      drives = await invoke<Drive[]>("drives");
       const defaults: Record<string, boolean> = {};
-      for (const c of cats) {
-        defaults[c.id] = c.risk === "safe" && selectable(c);
-      }
+      for (const c of cats) defaults[c.id] = c.risk === "safe" && selectable(c);
       checked = defaults;
 
       unlisteners.push(
@@ -106,6 +144,21 @@
             logPath: e.payload.log_path,
           };
           startScan();
+        }),
+        await listen<{ files: number; bytes: number }>("space:progress", (e) => {
+          spaceProgress = e.payload;
+        }),
+        await listen<{
+          root: string;
+          files: number;
+          bytes: number;
+          hotspots: Folder[];
+          top: Folder[];
+        }>("space:done", (e) => {
+          spaceScanning = false;
+          spaceResult = e.payload;
+          browseEntries = e.payload.top;
+          crumbs = [];
         })
       );
 
@@ -125,89 +178,196 @@
       {#if admin}
         <span class="admin-chip on">Admin</span>
       {:else}
-        <button class="ghost" onclick={relaunchAdmin} title="System temp and Windows Update cleanup need admin rights">
+        <button
+          class="ghost"
+          onclick={() => invoke("relaunch_admin")}
+          title="System temp and Windows Update cleanup need admin rights"
+        >
           Restart as admin
         </button>
       {/if}
-      <button class="ghost" onclick={startScan} disabled={busy}>
-        {scanning ? "Scanning…" : "Rescan"}
-      </button>
     </div>
   </header>
 
-  {#if result}
-    <div class="banner">
-      <strong>{fmt(result.total)} freed.</strong>
-      {#if result.skipped > 0}
-        {result.skipped} files skipped (in use by other apps — normal).
-      {/if}
-      <span class="log-path">Log: {result.logPath}</span>
-    </div>
-  {/if}
+  <nav class="tabs">
+    <button class:active={tab === "clean"} onclick={() => (tab = "clean")}>Clean</button>
+    <button class:active={tab === "space"} onclick={() => (tab = "space")}>Space</button>
+  </nav>
 
-  <main>
-    {#each modules as mod (mod.key)}
-      {@const group = cats.filter((c) => c.module === mod.key)}
-      {#if group.length > 0}
-        <section>
-          <h2>{mod.label}</h2>
-          {#each group as c (c.id)}
-            {@const size = sizes[c.id]}
-            <label class="row" class:disabled={!selectable(c)}>
-              <input
-                type="checkbox"
-                checked={checked[c.id] ?? false}
-                disabled={!selectable(c) || busy}
-                onchange={(e) => (checked = { ...checked, [c.id]: e.currentTarget.checked })}
-              />
-              <div class="row-text">
-                <div class="row-title">
-                  {c.name}
-                  {#if c.risk === "care"}<span class="chip care">confirm</span>{/if}
-                  {#if c.needs_admin}<span class="chip admin" class:off={!admin}>admin</span>{/if}
+  {#if tab === "clean"}
+    {#if result}
+      <div class="banner">
+        <strong>{fmt(result.total)} freed.</strong>
+        {#if result.skipped > 0}
+          {result.skipped} files skipped (in use by other apps — normal).
+        {/if}
+        <span class="log-path">Log: {result.logPath}</span>
+      </div>
+    {/if}
+
+    <main>
+      {#each modules as mod (mod.key)}
+        {@const group = cats.filter((c) => c.module === mod.key)}
+        {#if group.length > 0}
+          <section>
+            <h2>{mod.label}</h2>
+            {#each group as c (c.id)}
+              {@const size = sizes[c.id]}
+              <label class="row" class:disabled={!selectable(c)}>
+                <input
+                  type="checkbox"
+                  checked={checked[c.id] ?? false}
+                  disabled={!selectable(c) || busy}
+                  onchange={(e) => (checked = { ...checked, [c.id]: e.currentTarget.checked })}
+                />
+                <div class="row-text">
+                  <div class="row-title">
+                    {c.name}
+                    {#if c.risk === "care"}<span class="chip care">confirm</span>{/if}
+                    {#if c.needs_admin}<span class="chip admin" class:off={!admin}>admin</span
+                      >{/if}
+                  </div>
+                  <div class="row-desc">
+                    {#if !c.available}Not found on this PC{:else}{c.description}{/if}
+                  </div>
                 </div>
-                <div class="row-desc">
+                <div class="row-size">
                   {#if !c.available}
-                    Not found on this PC
+                    <span class="dim">—</span>
+                  {:else if c.needs_admin && !admin}
+                    <span class="dim">needs admin</span>
+                  {:else if size}
+                    <span class="bytes">{fmt(size.bytes)}</span>
+                    <span class="files">{size.files.toLocaleString()} files</span>
+                  {:else if scanning}
+                    <span class="dim pulse">scanning…</span>
                   {:else}
-                    {c.description}
+                    <span class="dim">—</span>
                   {/if}
                 </div>
+              </label>
+            {/each}
+          </section>
+        {/if}
+      {/each}
+    </main>
+
+    <footer>
+      <div class="total">
+        <span class="total-label">Selected</span>
+        <span class="total-value">{fmt(totalSelected)}</span>
+      </div>
+      <div class="footer-actions">
+        <button class="ghost" onclick={startScan} disabled={busy}>
+          {scanning ? "Scanning…" : "Rescan"}
+        </button>
+        <button class="clean" onclick={requestClean} disabled={busy || totalSelected === 0}>
+          {cleaning
+            ? "Cleaning…"
+            : `Clean ${selectedIds.length} ${selectedIds.length === 1 ? "category" : "categories"}`}
+        </button>
+      </div>
+    </footer>
+  {:else if tab === "space"}
+    <main>
+      <section>
+        <h2>Drives</h2>
+        <div class="drive-grid">
+          {#each drives as d (d.letter)}
+            {@const used = d.total - d.free}
+            <button
+              class="drive"
+              onclick={() => scanDrive(d.letter)}
+              disabled={spaceScanning}
+            >
+              <div class="drive-head">
+                <span class="drive-letter">{d.letter}</span>
+                <span class="drive-free">{fmt(d.free)} free</span>
               </div>
-              <div class="row-size">
-                {#if !c.available}
-                  <span class="dim">—</span>
-                {:else if c.needs_admin && !admin}
-                  <span class="dim">needs admin</span>
-                {:else if size}
-                  <span class="bytes">{fmt(size.bytes)}</span>
-                  <span class="files">{size.files.toLocaleString()} files</span>
-                {:else if scanning}
-                  <span class="dim pulse">scanning…</span>
-                {:else}
-                  <span class="dim">—</span>
-                {/if}
+              <div class="drive-bar">
+                <div
+                  class="drive-fill"
+                  class:hot={used / d.total > 0.9}
+                  style="width: {Math.round((used / d.total) * 100)}%"
+                ></div>
               </div>
-            </label>
+              <div class="drive-nums">{fmt(used)} used of {fmt(d.total)}</div>
+              <div class="drive-cta">{spaceScanning ? "…" : "Scan " + d.letter}</div>
+            </button>
           {/each}
+        </div>
+      </section>
+
+      {#if spaceScanning}
+        <section>
+          <h2>Scanning</h2>
+          <div class="scan-progress">
+            <span class="pulse">Walking the drive…</span>
+            {#if spaceProgress}
+              <span class="dim">
+                {spaceProgress.files.toLocaleString()} files · {fmt(spaceProgress.bytes)} so far
+              </span>
+            {/if}
+          </div>
         </section>
       {/if}
-    {/each}
-  </main>
 
-  <footer>
-    <div class="total">
-      <span class="total-label">Selected</span>
-      <span class="total-value">{fmt(totalSelected)}</span>
-    </div>
-    <button
-      class="clean"
-      onclick={requestClean}
-      disabled={busy || totalSelected === 0}
-    >
-      {cleaning ? "Cleaning…" : `Clean ${selectedIds.length} ${selectedIds.length === 1 ? "category" : "categories"}`}
-    </button>
-  </footer>
+      {#if spaceResult}
+        <section>
+          <h2>
+            Space hotspots — {spaceResult.root}
+            ({spaceResult.files.toLocaleString()} files, {fmt(spaceResult.bytes)} seen)
+          </h2>
+          {#each spaceResult.hotspots as h, i (h.path)}
+            {@const max = spaceResult.hotspots[0]?.bytes ?? 1}
+            <div class="folder-row">
+              <button class="folder-main" onclick={() => invoke("reveal", { path: h.path })} title="Open in Explorer">
+                <div class="folder-name">{h.path}</div>
+                <div class="size-bar">
+                  <div class="size-fill" style="width: {Math.max(2, (h.bytes / max) * 100)}%"></div>
+                </div>
+              </button>
+              <span class="folder-bytes">{fmt(h.bytes)}</span>
+            </div>
+          {/each}
+          {#if spaceResult.hotspots.length === 0}
+            <p class="dim">No single folder over 1 GB found.</p>
+          {/if}
+        </section>
+
+        <section>
+          <h2>Browse</h2>
+          <div class="crumbs">
+            <button class="crumb" onclick={() => jumpTo(-1)}>{spaceResult.root}</button>
+            {#each crumbs as c, i (c.path)}
+              <span class="dim">›</span>
+              <button class="crumb" onclick={() => jumpTo(i)}>{c.name}</button>
+            {/each}
+          </div>
+          {#each browseEntries as f (f.path)}
+            {@const max = browseEntries[0]?.bytes ?? 1}
+            <div class="folder-row">
+              <button class="folder-main" onclick={() => drillInto(f)} title="Open folder">
+                <div class="folder-name">{f.name}</div>
+                <div class="size-bar">
+                  <div class="size-fill" style="width: {Math.max(2, (f.bytes / max) * 100)}%"></div>
+                </div>
+              </button>
+              <span class="folder-bytes">{fmt(f.bytes)}</span>
+              <button class="ghost mini" onclick={() => invoke("reveal", { path: f.path })}>
+                Open
+              </button>
+            </div>
+          {/each}
+        </section>
+      {:else if !spaceScanning}
+        <p class="hint">
+          Pick a drive to map where the space actually went. View-only — nothing here deletes
+          anything.
+        </p>
+      {/if}
+    </main>
+  {/if}
 
   {#if confirmOpen}
     <div class="overlay" role="dialog" aria-modal="true">
@@ -290,7 +450,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 18px 24px 12px;
+    padding: 18px 24px 8px;
   }
   h1 {
     margin: 0;
@@ -308,6 +468,30 @@
     align-items: center;
   }
 
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 6px 24px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tabs button {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 7px 14px;
+    border-radius: 6px;
+  }
+  .tabs button:hover {
+    background: var(--accent-soft);
+    color: var(--ink);
+  }
+  .tabs button.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
   main {
     flex: 1;
     overflow-y: auto;
@@ -323,6 +507,11 @@
     color: var(--muted);
     margin: 0 0 6px 2px;
     font-weight: 600;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 13px;
+    max-width: 64ch;
   }
 
   .row {
@@ -355,11 +544,14 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
+    word-break: break-all;
   }
   .row-desc {
     color: var(--muted);
     font-size: 12px;
     margin-top: 1px;
+    word-break: break-all;
   }
   .row-size {
     text-align: right;
@@ -423,6 +615,143 @@
     border-radius: 99px;
   }
 
+  .drive-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 10px;
+  }
+  .drive {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .drive:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+  .drive-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .drive-letter {
+    font-size: 17px;
+    font-weight: 700;
+  }
+  .drive-free {
+    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .drive-bar {
+    height: 8px;
+    background: var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .drive-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 4px;
+  }
+  .drive-fill.hot {
+    background: var(--warn);
+  }
+  .drive-nums {
+    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .drive-cta {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+
+  .scan-progress {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .folder-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .folder-main {
+    flex: 1;
+    min-width: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 12px;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .folder-main:hover {
+    border-color: var(--accent);
+  }
+  .folder-name {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+  }
+  .size-bar {
+    height: 5px;
+    background: transparent;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .size-fill {
+    height: 100%;
+    background: var(--accent);
+    opacity: 0.7;
+    border-radius: 3px;
+  }
+  .folder-bytes {
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    min-width: 84px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .crumbs {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .crumb {
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+  .crumb:hover {
+    background: var(--accent-soft);
+  }
+
   footer {
     display: flex;
     justify-content: space-between;
@@ -430,6 +759,11 @@
     padding: 14px 24px;
     border-top: 1px solid var(--line);
     background: var(--surface);
+  }
+  .footer-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
   }
   .total-label {
     color: var(--muted);
@@ -465,6 +799,11 @@
   .ghost:hover:not(:disabled) {
     background: var(--accent-soft);
   }
+  .ghost.mini {
+    padding: 4px 10px;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
   .clean {
     background: var(--accent);
     color: var(--accent-ink);
@@ -477,7 +816,7 @@
   }
 
   .banner {
-    margin: 0 24px;
+    margin: 12px 24px 0;
     background: var(--accent-soft);
     border: 1px solid var(--accent);
     border-radius: 8px;
@@ -506,7 +845,7 @@
     border: 1px solid var(--line);
     border-radius: 10px;
     padding: 20px 22px;
-    max-width: 440px;
+    max-width: 480px;
     width: calc(100% - 48px);
   }
   .modal h3 {
@@ -523,6 +862,7 @@
   }
   .modal li {
     margin-bottom: 8px;
+    word-break: break-all;
   }
   .modal-desc {
     color: var(--muted);
