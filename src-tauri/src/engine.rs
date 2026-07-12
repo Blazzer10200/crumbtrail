@@ -183,6 +183,115 @@ fn recycle_bin_empty() -> bool {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::categories::{Category, Kind};
+    use std::path::{Path, PathBuf};
+
+    fn cat(
+        paths: Vec<PathBuf>,
+        age_hours: Option<u64>,
+        prefixes: Option<&'static [&'static str]>,
+    ) -> Category {
+        Category {
+            id: "test",
+            name: "test",
+            description: "",
+            module: "core",
+            risk: "safe",
+            needs_admin: false,
+            kind: Kind::Files,
+            paths,
+            age_hours,
+            file_prefixes: prefixes,
+        }
+    }
+
+    fn old_file(dir: &Path, name: &str, bytes: usize) -> PathBuf {
+        let p = dir.join(name);
+        fs::write(&p, vec![0u8; bytes]).unwrap();
+        let t = filetime::FileTime::from_system_time(
+            SystemTime::now() - Duration::from_secs(72 * 3600),
+        );
+        filetime::set_file_mtime(&p, t).unwrap();
+        p
+    }
+
+    #[test]
+    fn age_threshold_keeps_fresh_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        old_file(tmp.path(), "old.tmp", 100);
+        fs::write(tmp.path().join("fresh.tmp"), vec![0u8; 50]).unwrap();
+        let c = cat(vec![tmp.path().to_path_buf()], Some(48), None);
+
+        let scan = scan_category(&c);
+        assert_eq!((scan.bytes, scan.files), (100, 1));
+
+        let res = clean_category(&c, &mut Vec::new());
+        assert_eq!((res.freed_bytes, res.deleted, res.skipped), (100, 1, 0));
+        assert!(tmp.path().join("fresh.tmp").exists());
+        assert!(!tmp.path().join("old.tmp").exists());
+    }
+
+    #[test]
+    fn prefix_filter_only_touches_matching_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("thumbcache_256.db"), vec![0u8; 10]).unwrap();
+        fs::write(tmp.path().join("settings.dat"), vec![0u8; 20]).unwrap();
+        let c = cat(
+            vec![tmp.path().to_path_buf()],
+            None,
+            Some(&["thumbcache_"]),
+        );
+
+        let scan = scan_category(&c);
+        assert_eq!((scan.bytes, scan.files), (10, 1));
+
+        let res = clean_category(&c, &mut Vec::new());
+        assert_eq!(res.deleted, 1);
+        assert!(tmp.path().join("settings.dat").exists());
+        assert!(!tmp.path().join("thumbcache_256.db").exists());
+        assert!(tmp.path().exists());
+    }
+
+    #[test]
+    fn prunes_empty_subdirs_but_never_the_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nested = tmp.path().join("a").join("b");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("junk.bin"), vec![0u8; 5]).unwrap();
+        let c = cat(vec![tmp.path().to_path_buf()], None, None);
+
+        let res = clean_category(&c, &mut Vec::new());
+        assert_eq!((res.deleted, res.skipped), (1, 0));
+        assert!(!tmp.path().join("a").exists());
+        assert!(tmp.path().exists());
+    }
+
+    #[test]
+    fn symlinked_dir_contents_are_never_touched() {
+        let outside = tempfile::tempdir().unwrap();
+        let precious = outside.path().join("precious.txt");
+        fs::write(&precious, b"do not delete").unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let link = tmp.path().join("link");
+        // Needs Developer Mode or elevation on Windows — skip quietly if unavailable.
+        if std::os::windows::fs::symlink_dir(outside.path(), &link).is_err() {
+            return;
+        }
+
+        let c = cat(vec![tmp.path().to_path_buf()], None, None);
+        let scan = scan_category(&c);
+        assert_eq!(scan.files, 0);
+
+        clean_category(&c, &mut Vec::new());
+        assert!(precious.exists());
+        assert!(outside.path().exists());
+    }
+}
+
 pub fn is_elevated() -> bool {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Security::{

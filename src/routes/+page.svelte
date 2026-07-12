@@ -177,6 +177,8 @@
               <div class="row-size">
                 {#if !c.available}
                   <span class="dim">—</span>
+                {:else if c.needs_admin && !admin}
+                  <span class="dim">needs admin</span>
                 {:else if size}
                   <span class="bytes">{fmt(size.bytes)}</span>
                   <span class="files">{size.files.toLocaleString()} files</span>
@@ -233,6 +235,19 @@
   :global(html, body) {
     margin: 0;
     height: 100%;
+  }
+  :global(::-webkit-scrollbar) {
+    width: 10px;
+  }
+  :global(::-webkit-scrollbar-track) {
+    background: transparent;
+  }
+  :global(::-webkit-scrollbar-thumb) {
+    background: var(--line);
+    border-radius: 5px;
+  }
+  :global(::-webkit-scrollbar-thumb:hover) {
+    background: var(--muted);
   }
   :global(body) {
     background: var(--bg);
