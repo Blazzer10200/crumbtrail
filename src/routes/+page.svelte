@@ -439,6 +439,31 @@
       --line: #29343f;
     }
   }
+  /* Explicit theme override wins over the OS preference in both directions. */
+  :global(:root[data-theme="dark"] body) {
+    --bg: #12181f;
+    --surface: #1a222b;
+    --ink: #e4ebf1;
+    --muted: #92a2b0;
+    --accent: #2fb87e;
+    --accent-ink: #0b1510;
+    --accent-soft: #16301f;
+    --warn: #dfa23f;
+    --warn-soft: #2b2211;
+    --line: #29343f;
+  }
+  :global(:root[data-theme="light"] body) {
+    --bg: #f6f7f8;
+    --surface: #ffffff;
+    --ink: #1c2733;
+    --muted: #5b6b7a;
+    --accent: #178a58;
+    --accent-ink: #ffffff;
+    --accent-soft: #e2f2ea;
+    --warn: #a86c10;
+    --warn-soft: #f8efdd;
+    --line: #dfe4e9;
+  }
 
   .app {
     display: flex;
@@ -622,6 +647,7 @@
   }
   .drive {
     background: var(--surface);
+    color: var(--ink);
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 12px 14px;
@@ -629,9 +655,11 @@
     display: flex;
     flex-direction: column;
     gap: 7px;
+    transition: border-color 0.12s, box-shadow 0.12s;
   }
   .drive:hover:not(:disabled) {
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
   }
   .drive-head {
     display: flex;
@@ -655,11 +683,12 @@
   }
   .drive-fill {
     height: 100%;
-    background: var(--accent);
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 78%, transparent), var(--accent));
     border-radius: 4px;
+    transition: width 0.4s ease;
   }
   .drive-fill.hot {
-    background: var(--warn);
+    background: linear-gradient(90deg, color-mix(in srgb, var(--warn) 78%, transparent), var(--warn));
   }
   .drive-nums {
     color: var(--muted);
@@ -693,13 +722,15 @@
     flex: 1;
     min-width: 0;
     background: var(--surface);
+    color: var(--ink);
     border: 1px solid var(--line);
     border-radius: 6px;
-    padding: 7px 12px;
+    padding: 8px 12px;
     text-align: left;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 6px;
+    transition: border-color 0.12s;
   }
   .folder-main:hover {
     border-color: var(--accent);
@@ -707,6 +738,7 @@
   .folder-name {
     font-size: 13px;
     font-weight: 600;
+    color: var(--ink);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -715,15 +747,16 @@
   }
   .size-bar {
     height: 5px;
-    background: transparent;
+    background: var(--line);
     border-radius: 3px;
     overflow: hidden;
   }
   .size-fill {
     height: 100%;
     background: var(--accent);
-    opacity: 0.7;
+    opacity: 0.85;
     border-radius: 3px;
+    transition: width 0.3s ease;
   }
   .folder-bytes {
     font-weight: 650;
@@ -779,6 +812,7 @@
   button {
     font-family: inherit;
     font-size: 13px;
+    color: inherit;
     border-radius: 6px;
     cursor: pointer;
     border: 1px solid var(--line);
