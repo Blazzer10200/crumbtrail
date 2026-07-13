@@ -8,3 +8,7 @@ node_modules
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Claude Code harness (local dev-state — keep out of public repo)
+/CLAUDE.md
+/HANDOFF.md
