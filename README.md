@@ -10,6 +10,8 @@ Grab the installer from [Releases](../../releases), run it, done. No accounts, n
 
 > **First run:** Windows SmartScreen shows "Windows protected your PC" because the installer isn't code-signed. Click **More info → Run anyway**. That's normal for unsigned indie tools.
 
+**Automatic updates** (v0.4.0+): Sweep checks for a new version on launch and shows an "Install & restart" banner when one's available — or check manually with the header button. Updates are cryptographically signed and verified before installing, so they're safe even though the app isn't Authenticode-signed. (The first build with the updater is v0.4.0; install that one manually, then future updates are automatic.)
+
 ## Two tabs
 
 **Clean** — pick categories, see real sizes, delete only what you check:
@@ -56,6 +58,23 @@ npm run tauri build   # produce the installer (src-tauri/target/release/bundle)
 ```
 
 Stack: Tauri 2 + Svelte 5 (frontend), Rust (scanner/cleaner core).
+
+### Releasing a new version (with auto-update)
+
+Updates are signed with a minisign keypair (the public key lives in `tauri.conf.json`; the private key stays off-repo). To cut a release:
+
+```
+# 1. bump the version in package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml
+# 2. build the signed installer + .sig
+$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "$env:USERPROFILE\.tauri\sweep-updater.key" -Raw)
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+npm run tauri build
+# 3. generate the update manifest
+pwsh -NoProfile -File scripts\make-update-manifest.ps1 -Version 0.4.0 -Notes "What changed"
+# 4. create a GitHub Release tagged v0.4.0 and upload the -setup.exe + latest.json
+```
+
+Installed apps fetch `releases/latest/download/latest.json`, compare versions, and download + verify the signed installer before applying. **Keep `~/.tauri/sweep-updater.key` safe and private** — it's what proves an update is genuinely from you.
 
 ### CDP dev tooling (optional)
 

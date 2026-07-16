@@ -2,6 +2,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { check, type Update } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import { onMount } from "svelte";
 
   type Cat = {
@@ -32,6 +34,48 @@
 
   function toggleTheme() {
     applyTheme(theme === "dark" ? "light" : "dark");
+  }
+
+  // ---- Auto-update ----
+  let update = $state<Update | null>(null);
+  let updateStatus = $state<
+    "idle" | "checking" | "available" | "current" | "installing" | "error"
+  >("idle");
+  let updateErr = $state("");
+
+  async function checkForUpdates(manual = false) {
+    if (updateStatus === "checking" || updateStatus === "installing") return;
+    updateStatus = "checking";
+    try {
+      const u = await check();
+      if (u) {
+        update = u;
+        updateStatus = "available";
+      } else {
+        updateStatus = manual ? "current" : "idle";
+      }
+    } catch (e) {
+      updateErr = String(e);
+      // Stay quiet on the silent launch check; only surface errors on a manual click.
+      updateStatus = manual ? "error" : "idle";
+    }
+    if (updateStatus === "current" || updateStatus === "error") {
+      setTimeout(() => {
+        if (updateStatus === "current" || updateStatus === "error") updateStatus = "idle";
+      }, 4000);
+    }
+  }
+
+  async function installUpdate() {
+    if (!update) return;
+    updateStatus = "installing";
+    try {
+      await update.downloadAndInstall();
+      await relaunch();
+    } catch (e) {
+      updateErr = String(e);
+      updateStatus = "error";
+    }
   }
 
   // ---- Clean tab ----
@@ -172,6 +216,9 @@
       applyTheme(matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     }
 
+    // Quiet check for a newer release on launch; errors stay silent.
+    checkForUpdates(false);
+
     const unlisteners: Array<() => void> = [];
     (async () => {
       admin = await invoke<boolean>("elevated");
@@ -231,6 +278,20 @@
 />
 
 <div class="app">
+  {#if updateStatus === "available" || updateStatus === "installing"}
+    <div class="update-bar">
+      <span class="update-msg">
+        {#if updateStatus === "installing"}
+          Downloading and installing update…
+        {:else}
+          A new version is ready — <strong>v{update?.version}</strong>
+        {/if}
+      </span>
+      <button class="update-btn" onclick={installUpdate} disabled={updateStatus === "installing"}>
+        {updateStatus === "installing" ? "Installing…" : "Install & restart"}
+      </button>
+    </div>
+  {/if}
   <header>
     <div class="brand">
       <svg class="logo" width="34" height="34" viewBox="0 0 32 32" aria-hidden="true">
@@ -258,6 +319,14 @@
           Restart as admin
         </button>
       {/if}
+      <button
+        class="ghost"
+        onclick={() => checkForUpdates(true)}
+        disabled={updateStatus === "checking" || updateStatus === "installing"}
+        title="Check for updates"
+      >
+        {#if updateStatus === "checking"}Checking…{:else if updateStatus === "current"}✓ Up to date{:else if updateStatus === "error"}Check failed{:else}Check for updates{/if}
+      </button>
       <button
         class="ghost icon"
         onclick={toggleTheme}
@@ -1178,6 +1247,32 @@
     font-size: 11px;
     margin-top: 3px;
     word-break: break-all;
+  }
+
+  .update-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 9px var(--gutter);
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 13px;
+    flex-wrap: wrap;
+  }
+  .update-msg strong {
+    font-weight: 700;
+  }
+  .update-btn {
+    background: var(--accent-ink);
+    color: var(--accent);
+    border: none;
+    font-weight: 650;
+    padding: 5px 14px;
+    border-radius: 6px;
+  }
+  .update-btn:hover:not(:disabled) {
+    filter: brightness(0.95);
   }
 
   .overlay {
