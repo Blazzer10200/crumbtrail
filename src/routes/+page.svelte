@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { onMount } from "svelte";
 
   type Cat = {
@@ -19,6 +20,19 @@
 
   let tab = $state<"clean" | "space">("clean");
   let admin = $state(false);
+  let theme = $state<"light" | "dark">("light");
+
+  function applyTheme(t: "light" | "dark") {
+    theme = t;
+    document.documentElement.dataset.theme = t;
+    try {
+      localStorage.setItem("sweep-theme", t);
+    } catch {}
+  }
+
+  function toggleTheme() {
+    applyTheme(theme === "dark" ? "light" : "dark");
+  }
 
   // ---- Clean tab ----
   let cats = $state<Cat[]>([]);
@@ -55,6 +69,7 @@
     bytes: number;
     hotspots: Folder[];
     top: Folder[];
+    biggest: Folder[];
   } | null>(null);
   let crumbs = $state<{ path: string; name: string }[]>([]);
   let browseEntries = $state<Folder[]>([]);
@@ -64,6 +79,18 @@
     if (b >= 1024 ** 2) return (b / 1024 ** 2).toFixed(1) + " MB";
     if (b >= 1024) return (b / 1024).toFixed(0) + " KB";
     return b + " B";
+  }
+
+  // Windows-managed files that show up huge but aren't user-deletable — tag them
+  // so nobody wonders why "deleting" them does nothing.
+  const SYSTEM_FILES = new Set([
+    "pagefile.sys",
+    "hiberfil.sys",
+    "swapfile.sys",
+    "dumpstack.log.tmp",
+  ]);
+  function isSystemFile(p: string): boolean {
+    return SYSTEM_FILES.has(p.slice(p.lastIndexOf("\\") + 1).toLowerCase());
   }
 
   function selectable(c: Cat): boolean {
@@ -89,13 +116,28 @@
     await invoke("clean", { ids: selectedIds });
   }
 
-  async function scanDrive(letter: string) {
+  async function scanRoot(root: string) {
     spaceResult = null;
     crumbs = [];
     browseEntries = [];
     spaceProgress = null;
     spaceScanning = true;
-    await invoke("space_scan", { root: letter + "\\" });
+    await invoke("space_scan", { root });
+  }
+
+  function scanDrive(letter: string) {
+    return scanRoot(letter + "\\");
+  }
+
+  async function scanFolder() {
+    const picked = await openDialog({ directory: true, title: "Scan a folder" });
+    if (typeof picked === "string") scanRoot(picked);
+  }
+
+  function setModule(key: string, on: boolean) {
+    const next = { ...checked };
+    for (const c of cats) if (c.module === key && selectable(c)) next[c.id] = on;
+    checked = next;
   }
 
   async function drillInto(f: Folder) {
@@ -117,6 +159,19 @@
   }
 
   onMount(() => {
+    const stored = (() => {
+      try {
+        return localStorage.getItem("sweep-theme");
+      } catch {
+        return null;
+      }
+    })();
+    if (stored === "light" || stored === "dark") {
+      applyTheme(stored);
+    } else {
+      applyTheme(matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    }
+
     const unlisteners: Array<() => void> = [];
     (async () => {
       admin = await invoke<boolean>("elevated");
@@ -154,6 +209,7 @@
           bytes: number;
           hotspots: Folder[];
           top: Folder[];
+          biggest: Folder[];
         }>("space:done", (e) => {
           spaceScanning = false;
           spaceResult = e.payload;
@@ -168,11 +224,27 @@
   });
 </script>
 
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape" && confirmOpen) confirmOpen = false;
+  }}
+/>
+
 <div class="app">
   <header>
-    <div>
-      <h1>Sweep</h1>
-      <p class="tagline">Scan first. Nothing is deleted until you say so.</p>
+    <div class="brand">
+      <svg class="logo" width="34" height="34" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="9" fill="var(--accent)" />
+        <g stroke="var(--accent-ink)" stroke-width="2.4" stroke-linecap="round">
+          <line x1="9" y1="11" x2="23" y2="11" />
+          <line x1="9" y1="16" x2="20" y2="16" />
+          <line x1="9" y1="21" x2="16" y2="21" />
+        </g>
+      </svg>
+      <div>
+        <h1>Sweep</h1>
+        <p class="tagline">Scan first. Nothing is deleted until you say so.</p>
+      </div>
     </div>
     <div class="header-actions">
       {#if admin}
@@ -186,6 +258,14 @@
           Restart as admin
         </button>
       {/if}
+      <button
+        class="ghost icon"
+        onclick={toggleTheme}
+        title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        aria-label="Toggle theme"
+      >
+        {theme === "dark" ? "☀" : "☾"}
+      </button>
     </div>
   </header>
 
@@ -209,8 +289,18 @@
       {#each modules as mod (mod.key)}
         {@const group = cats.filter((c) => c.module === mod.key)}
         {#if group.length > 0}
+          {@const anyOn = group.some((c) => checked[c.id] && selectable(c))}
           <section>
-            <h2>{mod.label}</h2>
+            <div class="section-head">
+              <h2>{mod.label}</h2>
+              <button
+                class="link"
+                disabled={busy || !group.some((c) => selectable(c))}
+                onclick={() => setModule(mod.key, !anyOn)}
+              >
+                {anyOn ? "Deselect all" : "Select all"}
+              </button>
+            </div>
             {#each group as c (c.id)}
               {@const size = sizes[c.id]}
               <label class="row" class:disabled={!selectable(c)}>
@@ -271,28 +361,42 @@
   {:else if tab === "space"}
     <main>
       <section>
-        <h2>Drives</h2>
+        <div class="section-head">
+          <h2>Drives</h2>
+          <button class="link" disabled={spaceScanning} onclick={scanFolder}>
+            Scan a folder…
+          </button>
+        </div>
         <div class="drive-grid">
           {#each drives as d (d.letter)}
             {@const used = d.total - d.free}
+            {@const pct = Math.round((used / d.total) * 100)}
             <button
               class="drive"
               onclick={() => scanDrive(d.letter)}
               disabled={spaceScanning}
             >
-              <div class="drive-head">
-                <span class="drive-letter">{d.letter}</span>
-                <span class="drive-free">{fmt(d.free)} free</span>
+              <div class="donut" class:hot={used / d.total > 0.9} style="--pct:{pct}">
+                <div class="donut-hole">
+                  <span class="donut-pct">{pct}%</span>
+                  <span class="donut-sub">used</span>
+                </div>
               </div>
-              <div class="drive-bar">
-                <div
-                  class="drive-fill"
-                  class:hot={used / d.total > 0.9}
-                  style="width: {Math.round((used / d.total) * 100)}%"
-                ></div>
+              <div class="drive-body">
+                <div class="drive-title">
+                  <span class="drive-letter">{d.letter}</span>
+                  <span class="drive-kind">Local disk</span>
+                </div>
+                <div class="drive-stats">
+                  <span class="stat"><span class="stat-v">{fmt(used)}</span><span class="stat-l">used</span></span>
+                  <span class="stat"><span class="stat-v">{fmt(d.free)}</span><span class="stat-l">free</span></span>
+                  <span class="stat"><span class="stat-v">{fmt(d.total)}</span><span class="stat-l">total</span></span>
+                </div>
               </div>
-              <div class="drive-nums">{fmt(used)} used of {fmt(d.total)}</div>
-              <div class="drive-cta">{spaceScanning ? "…" : "Scan " + d.letter}</div>
+              <span class="drive-cta">
+                {spaceScanning ? "Scanning…" : "Scan " + d.letter}
+                <span class="cta-arrow">→</span>
+              </span>
             </button>
           {/each}
         </div>
@@ -314,10 +418,11 @@
 
       {#if spaceResult}
         <section>
-          <h2>
-            Space hotspots — {spaceResult.root}
-            ({spaceResult.files.toLocaleString()} files, {fmt(spaceResult.bytes)} seen)
-          </h2>
+          <h2>Space hotspots</h2>
+          <p class="section-sub">
+            Folders where space piles up — {spaceResult.root} · {spaceResult.files.toLocaleString()}
+            files, {fmt(spaceResult.bytes)} seen
+          </p>
           {#each spaceResult.hotspots as h, i (h.path)}
             {@const max = spaceResult.hotspots[0]?.bytes ?? 1}
             <div class="folder-row">
@@ -335,8 +440,36 @@
           {/if}
         </section>
 
+        {#if spaceResult.biggest.length > 0}
+          <section>
+            <h2>Largest files</h2>
+            <p class="section-sub">The biggest individual files on the drive.</p>
+            {#each spaceResult.biggest.slice(0, 25) as f, i (f.path)}
+              {@const max = spaceResult.biggest[0]?.bytes ?? 1}
+              <div class="folder-row">
+                <button
+                  class="folder-main"
+                  onclick={() => invoke("reveal", { path: f.path })}
+                  title="Show in Explorer"
+                >
+                  <div class="file-line">
+                    <span class="file-name">{f.name}</span>
+                    {#if isSystemFile(f.path)}<span class="chip sys">system</span>{/if}
+                  </div>
+                  <div class="file-path">{f.path}</div>
+                  <div class="size-bar">
+                    <div class="size-fill" style="width: {Math.max(2, (f.bytes / max) * 100)}%"></div>
+                  </div>
+                </button>
+                <span class="folder-bytes">{fmt(f.bytes)}</span>
+              </div>
+            {/each}
+          </section>
+        {/if}
+
         <section>
           <h2>Browse</h2>
+          <p class="section-sub">Drill into any folder. View-only — nothing here deletes anything.</p>
           <div class="crumbs">
             <button class="crumb" onclick={() => jumpTo(-1)}>{spaceResult.root}</button>
             {#each crumbs as c, i (c.path)}
@@ -361,10 +494,22 @@
           {/each}
         </section>
       {:else if !spaceScanning}
-        <p class="hint">
-          Pick a drive to map where the space actually went. View-only — nothing here deletes
-          anything.
-        </p>
+        <div class="empty">
+          <svg width="52" height="52" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M3 7.5 A9 4.5 0 0 0 21 7.5 M3 7.5 A9 4.5 0 0 1 21 7.5 M3 7.5 v9 A9 4.5 0 0 0 21 16.5 v-9"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <div class="empty-title">Map where your space went</div>
+          <p class="empty-sub">
+            Pick a drive above (or scan a folder) to see the biggest folders and files. View-only —
+            nothing here deletes anything.
+          </p>
+        </div>
       {/if}
     </main>
   {/if}
@@ -414,6 +559,8 @@
     color: var(--ink);
     font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
     font-size: 14px;
+    /* Center content at a comfortable max width; bars/borders stay full-bleed. */
+    --gutter: max(24px, calc((100% - 1060px) / 2));
     --bg: #f6f7f8;
     --surface: #ffffff;
     --ink: #1c2733;
@@ -471,11 +618,31 @@
     height: 100vh;
   }
 
+  /* Smooth the light/dark swap — fade colors instead of snapping. */
+  :global(body),
+  :global(.app *) {
+    transition: background-color 0.28s ease, color 0.28s ease, border-color 0.28s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :global(body),
+    :global(.app *) {
+      transition: none;
+    }
+  }
+
   header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 18px 24px 8px;
+    padding: 18px var(--gutter) 8px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo {
+    flex-shrink: 0;
   }
   h1 {
     margin: 0;
@@ -496,7 +663,7 @@
   .tabs {
     display: flex;
     gap: 4px;
-    padding: 6px 24px 10px;
+    padding: 6px var(--gutter) 10px;
     border-bottom: 1px solid var(--line);
   }
   .tabs button {
@@ -520,7 +687,23 @@
   main {
     flex: 1;
     overflow-y: auto;
-    padding: 0 24px 16px;
+    padding: 0 var(--gutter) 16px;
+    animation: fadeIn 0.2s ease;
+  }
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    main {
+      animation: none;
+    }
   }
   section {
     margin-top: 14px;
@@ -533,10 +716,56 @@
     margin: 0 0 6px 2px;
     font-weight: 600;
   }
-  .hint {
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .section-head h2 {
+    margin: 0 0 0 2px;
+  }
+  .link {
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .link:hover:not(:disabled) {
+    background: var(--accent-soft);
+  }
+  .section-sub {
     color: var(--muted);
+    font-size: 12.5px;
+    margin: -2px 0 9px 2px;
+    max-width: 72ch;
+  }
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 4px;
+    padding: 52px 24px;
+    color: var(--muted);
+  }
+  .empty svg {
+    opacity: 0.55;
+    margin-bottom: 4px;
+  }
+  .empty-title {
+    font-size: 15px;
+    font-weight: 650;
+    color: var(--ink);
+  }
+  .empty-sub {
     font-size: 13px;
-    max-width: 64ch;
+    max-width: 44ch;
+    margin: 0;
+    line-height: 1.5;
   }
 
   .row {
@@ -631,6 +860,11 @@
     border: 1px solid var(--line);
     color: var(--muted);
   }
+  .chip.sys {
+    background: var(--line);
+    color: var(--muted);
+    flex-shrink: 0;
+  }
   .admin-chip.on {
     background: var(--accent-soft);
     color: var(--accent);
@@ -641,64 +875,117 @@
   }
 
   .drive-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    display: flex;
+    flex-direction: column;
     gap: 10px;
   }
   .drive {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    width: 100%;
     background: var(--surface);
     color: var(--ink);
     border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 12px 14px;
+    border-radius: 12px;
+    padding: 16px 20px;
     text-align: left;
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    transition: border-color 0.12s, box-shadow 0.12s;
+    transition: background-color 0.28s ease, color 0.28s ease, border-color 0.12s,
+      box-shadow 0.12s;
   }
   .drive:hover:not(:disabled) {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
   }
-  .drive-head {
+  /* Usage ring — conic fill to --pct%, hollowed by the surface-colored center. */
+  .donut {
+    --fillcolor: var(--accent);
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    background: conic-gradient(var(--fillcolor) calc(var(--pct) * 1%), var(--line) 0);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    transition: background 0.5s ease;
+  }
+  .donut.hot {
+    --fillcolor: var(--warn);
+  }
+  .donut-hole {
+    width: 66px;
+    height: 66px;
+    border-radius: 50%;
+    background: var(--surface);
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .donut-pct {
+    font-size: 19px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .donut-sub {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+  .drive-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .drive-title {
+    display: flex;
     align-items: baseline;
+    gap: 9px;
+    margin-bottom: 9px;
   }
   .drive-letter {
-    font-size: 17px;
+    font-size: 21px;
     font-weight: 700;
   }
-  .drive-free {
-    color: var(--muted);
+  .drive-kind {
     font-size: 12px;
+    color: var(--muted);
+  }
+  .drive-stats {
+    display: flex;
+    gap: 26px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .stat-v {
+    font-weight: 650;
+    font-size: 14px;
     font-variant-numeric: tabular-nums;
   }
-  .drive-bar {
-    height: 8px;
-    background: var(--line);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .drive-fill {
-    height: 100%;
-    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 78%, transparent), var(--accent));
-    border-radius: 4px;
-    transition: width 0.4s ease;
-  }
-  .drive-fill.hot {
-    background: linear-gradient(90deg, color-mix(in srgb, var(--warn) 78%, transparent), var(--warn));
-  }
-  .drive-nums {
+  .stat-l {
+    font-size: 11px;
     color: var(--muted);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
   .drive-cta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     color: var(--accent);
-    font-weight: 600;
-    font-size: 12.5px;
+    font-weight: 650;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  .cta-arrow {
+    transition: transform 0.15s ease;
+  }
+  .drive:hover:not(:disabled) .cta-arrow {
+    transform: translateX(3px);
   }
 
   .scan-progress {
@@ -730,7 +1017,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    transition: border-color 0.12s;
+    transition: background-color 0.28s ease, color 0.28s ease, border-color 0.12s;
   }
   .folder-main:hover {
     border-color: var(--accent);
@@ -739,6 +1026,29 @@
     font-size: 13px;
     font-weight: 600;
     color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+  }
+  .file-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .file-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .file-path {
+    font-size: 11px;
+    color: var(--muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -789,7 +1099,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 14px 24px;
+    padding: 14px var(--gutter);
     border-top: 1px solid var(--line);
     background: var(--surface);
   }
@@ -838,6 +1148,11 @@
     font-size: 12px;
     flex-shrink: 0;
   }
+  .ghost.icon {
+    padding: 5px 9px;
+    font-size: 15px;
+    line-height: 1;
+  }
   .clean {
     background: var(--accent);
     color: var(--accent-ink);
@@ -850,7 +1165,7 @@
   }
 
   .banner {
-    margin: 12px 24px 0;
+    margin: 12px var(--gutter) 0;
     background: var(--accent-soft);
     border: 1px solid var(--accent);
     border-radius: 8px;

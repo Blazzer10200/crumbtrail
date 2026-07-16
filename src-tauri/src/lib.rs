@@ -88,6 +88,7 @@ fn space_scan(app: AppHandle, root: String) {
             "bytes": scan.bytes,
             "hotspots": space::hotspots(&scan),
             "top": space::children_of(&scan, &scan.root),
+            "biggest": &scan.biggest,
         });
         *app.state::<SpaceState>().0.lock().unwrap() = Some(scan);
         let _ = app.emit("space:done", payload);
@@ -104,8 +105,14 @@ fn space_children(state: State<SpaceState>, dir: String) -> Vec<space::FolderEnt
 
 #[tauri::command]
 fn reveal(path: String) {
-    if Path::new(&path).is_dir() {
+    let p = Path::new(&path);
+    if p.is_dir() {
         let _ = std::process::Command::new("explorer").arg(&path).spawn();
+    } else if p.is_file() {
+        // /select, opens the parent folder with the file highlighted.
+        let _ = std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .spawn();
     }
 }
 
@@ -144,6 +151,7 @@ fn write_log(lines: &[String]) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(SpaceState::default())
         .invoke_handler(tauri::generate_handler![
             get_categories,

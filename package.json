@@ -1,6 +1,6 @@
 {
   "name": "sweep",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -9,11 +9,16 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "cdp:serve": "node scripts/cdp/serve.cjs",
+    "cdp:dev": "pwsh -NoProfile -File scripts/run-dev-deelevated.ps1 -WaitForCdp",
+    "cdp:doctor": "bash scripts/cdp/c.sh doctor",
+    "cdp:clean": "bash scripts/cdp/c.sh reap --all"
   },
   "license": "MIT",
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2"
   },
   "devDependencies": {

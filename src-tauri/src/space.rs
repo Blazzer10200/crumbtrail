@@ -1,7 +1,11 @@
 use serde::Serialize;
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+// How many of the largest individual files to keep during a scan.
+const TOP_FILES: usize = 200;
 
 #[derive(Default)]
 pub struct SpaceState(pub Mutex<Option<SpaceScan>>);
@@ -9,6 +13,7 @@ pub struct SpaceState(pub Mutex<Option<SpaceScan>>);
 pub struct SpaceScan {
     pub root: PathBuf,
     pub dirs: HashMap<PathBuf, u64>,
+    pub biggest: Vec<FolderEntry>,
     pub files: u64,
     pub bytes: u64,
 }
@@ -74,6 +79,9 @@ pub fn scan_root<F: FnMut(u64, u64)>(root: &Path, mut on_progress: F) -> SpaceSc
     let mut dirs: HashMap<PathBuf, u64> = HashMap::new();
     let mut files = 0u64;
     let mut bytes = 0u64;
+    // Bounded min-heap: smallest of the current top-N sits at the top so we can
+    // cheaply reject files that can't make the cut, only cloning paths that do.
+    let mut top: BinaryHeap<Reverse<(u64, PathBuf)>> = BinaryHeap::new();
     let mut last = std::time::Instant::now();
 
     let walker = Walk::new(root)
@@ -95,6 +103,12 @@ pub fn scan_root<F: FnMut(u64, u64)>(root: &Path, mut on_progress: F) -> SpaceSc
         files += 1;
         bytes += size;
         let path = entry.path();
+        if top.len() < TOP_FILES {
+            top.push(Reverse((size, path.clone())));
+        } else if top.peek().is_some_and(|Reverse((min, _))| size > *min) {
+            top.pop();
+            top.push(Reverse((size, path.clone())));
+        }
         let mut p: &Path = &path;
         while let Some(parent) = p.parent() {
             *dirs.entry(parent.to_path_buf()).or_insert(0) += size;
@@ -109,9 +123,23 @@ pub fn scan_root<F: FnMut(u64, u64)>(root: &Path, mut on_progress: F) -> SpaceSc
         }
     }
 
+    let mut biggest: Vec<FolderEntry> = top
+        .into_iter()
+        .map(|Reverse((b, p))| FolderEntry {
+            name: p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| p.display().to_string()),
+            path: p.display().to_string(),
+            bytes: b,
+        })
+        .collect();
+    biggest.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+
     SpaceScan {
         root: root.to_path_buf(),
         dirs,
+        biggest,
         files,
         bytes,
     }

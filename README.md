@@ -22,7 +22,16 @@ Grab the installer from [Releases](../../releases), run it, done. No accounts, n
 
 Categories that don't exist on your PC show as "Not found" and are left alone. Shader caches rebuild automatically — first game launch afterward is slightly slower, then back to normal.
 
-**Space** — maps where your disk actually went. Pick a drive, get a used/free bar and a ranked list of the biggest folders (the "space hotspots"), then drill in or open any folder in Explorer. Full 2 TB drive scans in under 20 seconds. **View-only — the Space tab never deletes anything.**
+**Space** — maps where your disk actually went. Pick a drive (or point it at any folder), and get:
+
+- a **usage ring** per drive with used / free / total at a glance,
+- **space hotspots** — the folders where space actually piles up,
+- **largest files** — the biggest individual files on the drive, with Windows-managed files (like `pagefile.sys`) tagged as *system*,
+- a **browse** view to drill into any folder and open it in Explorer.
+
+Full 2 TB drive scans in under 20 seconds. **View-only — the Space tab never deletes anything.**
+
+Light and dark themes are both supported — toggle with the sun/moon button in the header (it remembers your choice; otherwise it follows Windows).
 
 ## Safety rules (baked into the core)
 
@@ -47,3 +56,14 @@ npm run tauri build   # produce the installer (src-tauri/target/release/bundle)
 ```
 
 Stack: Tauri 2 + Svelte 5 (frontend), Rust (scanner/cleaner core).
+
+### CDP dev tooling (optional)
+
+`scripts/cdp/` holds a WebView2 DevTools-Protocol harness for inspecting the running app (screenshots, DOM/console reads, driving the UI) without manual screenshotting. WebView2 150.x won't expose the debug port under an elevated process, so launch dev de-elevated:
+
+```
+npm run cdp:dev      # launch dev at medium integrity + wait for CDP :9222
+npm run cdp:serve    # start the wrapper (background), then:
+bash scripts/cdp/c.sh look
+npm run cdp:doctor   # diagnose if CDP won't come up
+```
