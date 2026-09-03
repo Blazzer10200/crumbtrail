@@ -1,5 +1,10 @@
 # Sweep
 
+> **Archived on 2026-09-03.** Development is paused and the maintainer's local
+> checkout has been retired. The source remains available here for reference or
+> a future restart. See [ARCHIVE.md](ARCHIVE.md) for the preserved project state
+> and restoration checklist. This is not a new application release.
+
 A small Windows app that shows you exactly what junk is eating your disk — temp files, stale caches, update leftovers, gaming and dev caches — and clears only what you approve.
 
 **Scan first. Nothing is deleted until you check the boxes and hit Clean.**
