@@ -1,6 +1,6 @@
 # Codex project instructions
 
-This file is the Codex runtime authority for `sweep`. `CLAUDE.md` may supply product history, but its slash-command claims do not define Codex behavior.
+This file is the Codex runtime authority for `crumbtrail` (renamed from Sweep 2026-09-29). `CLAUDE.md` may supply product history, but its slash-command claims do not define Codex behavior.
 
 ## Project
 

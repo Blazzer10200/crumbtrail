@@ -28,7 +28,7 @@
     theme = t;
     document.documentElement.dataset.theme = t;
     try {
-      localStorage.setItem("sweep-theme", t);
+      localStorage.setItem("crumbtrail-theme", t);
     } catch {}
   }
 
@@ -205,7 +205,7 @@
   onMount(() => {
     const stored = (() => {
       try {
-        return localStorage.getItem("sweep-theme");
+        return localStorage.getItem("crumbtrail-theme");
       } catch {
         return null;
       }
@@ -303,7 +303,7 @@
         </g>
       </svg>
       <div>
-        <h1>Sweep</h1>
+        <h1>Crumbtrail</h1>
         <p class="tagline">Scan first. Nothing is deleted until you say so.</p>
       </div>
     </div>

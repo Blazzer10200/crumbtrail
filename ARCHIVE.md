@@ -1,7 +1,8 @@
 # Sweep archival snapshot — 2026-09-03
 
-> **Unarchived 2026-09-29 — development has resumed.** This file is kept as a
-> historical record and for its release/signing-key guidance below.
+> **Unarchived 2026-09-29 — development has resumed, and the project was renamed
+> from Sweep to Crumbtrail** (repo `Blazzer10200/crumbtrail`). This file is kept
+> as a historical record and for its release/signing-key guidance below.
 
 ## Status
 

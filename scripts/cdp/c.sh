@@ -519,8 +519,8 @@ case "$cmd" in
   reap|clean)
     # reap [--all] — kill ORPHANED dev processes that leak after an ungraceful
     # exit (Ctrl+C on tauri dev, VS Code closing its terminal, a hard-kill). These
-    # bypass Rift's RunEvent::Exit reap, so WebView2 trees + sweep MCP children
-    # linger in Task Manager burning memory. STRICTLY path-scoped: only sweep
+    # bypass Rift's RunEvent::Exit reap, so WebView2 trees + crumbtrail MCP children
+    # linger in Task Manager burning memory. STRICTLY path-scoped: only crumbtrail
     # under the DEV target dir (cargo-targets / src-tauri\target) + EBWebView-Dev
     # webviews + stale vite. NEVER touches the user's installed prod Rift (that
     # lives under %LOCALAPPDATA%\Rift, a different path + user-data-dir).
@@ -535,7 +535,7 @@ case "$cmd" in
         \$c = Get-NetTCPConnection -LocalPort 9222 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
         if (\$c) { \$wv = Get-CimInstance Win32_Process -Filter \"ProcessId=\$(\$c.OwningProcess)\" -ErrorAction SilentlyContinue; if (\$wv) { \$keep += \$wv.ParentProcessId } }
         # also keep the windowed dev app + its whole claude/MCP subtree
-        Get-Process sweep -ErrorAction SilentlyContinue | Where-Object { \$_.MainWindowTitle -ne '' -and \$_.Path -like '*cargo-targets*' } | ForEach-Object { \$keep += \$_.Id }
+        Get-Process crumbtrail -ErrorAction SilentlyContinue | Where-Object { \$_.MainWindowTitle -ne '' -and \$_.Path -like '*cargo-targets*' } | ForEach-Object { \$keep += \$_.Id }
       }
       \$keepSet = @{}; \$keep | ForEach-Object { \$keepSet[\$_] = \$true }
       # Build the keep SUBTREE (a kept app's claude children + their rift MCP grandchildren must survive too)
@@ -545,19 +545,19 @@ case "$cmd" in
         while (\$changed) { \$changed = \$false; foreach (\$p in \$allProcs) { if (\$keepSet[\$p.ParentProcessId] -and -not \$keepSet[\$p.ProcessId]) { \$keepSet[\$p.ProcessId] = \$true; \$changed = \$true } } }
       }
       \$killedRift = 0; \$killedWv = 0; \$killedVite = 0
-      # 1) orphaned dev sweep.exe (path-scoped, not in keep-subtree)
-      Get-CimInstance Win32_Process -Filter \"Name='sweep.exe'\" | Where-Object { (\$_.ExecutablePath -like '*cargo-targets*' -or \$_.ExecutablePath -like '*src-tauri\\target*') -and -not \$keepSet[\$_.ProcessId] } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue; \$killedRift++ }
+      # 1) orphaned dev crumbtrail.exe (path-scoped, not in keep-subtree)
+      Get-CimInstance Win32_Process -Filter \"Name='crumbtrail.exe'\" | Where-Object { (\$_.ExecutablePath -like '*cargo-targets*' -or \$_.ExecutablePath -like '*src-tauri\\target*') -and -not \$keepSet[\$_.ProcessId] } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue; \$killedRift++ }
       # 2) orphaned EBWebView-Dev webview trees (not owned by a kept rift)
-      Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { \$_.CommandLine -like '*Sweep?EBWebView-Dev*' -and -not \$keepSet[\$_.ParentProcessId] } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue; \$killedWv++ }
+      Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { \$_.CommandLine -like '*Crumbtrail?EBWebView-Dev*' -and -not \$keepSet[\$_.ParentProcessId] } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue; \$killedWv++ }
       # 3) stale vite on 1420 ONLY if we killed the app that owned it (--all), else leave it
       if (\$all) { try { Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction Stop | ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force -ErrorAction SilentlyContinue; \$killedVite++ } } catch {} }
       \$viteMsg = if (\$all) { ', '+\$killedVite+' vite' } else { '' }
-      Write-Output ('[reap] killed '+\$killedRift+' orphan sweep.exe, '+\$killedWv+' EBWebView-Dev webview proc(s)'+\$viteMsg)
+      Write-Output ('[reap] killed '+\$killedRift+' orphan crumbtrail.exe, '+\$killedWv+' EBWebView-Dev webview proc(s)'+\$viteMsg)
       if (-not \$all -and \$keep.Count -gt 0) { Write-Output ('[reap] preserved live dev instance (PID '+(\$keep -join ',')+') + its subtree. Use --all to reap everything.') }
       # Report what remains
-      \$rn = @(Get-CimInstance Win32_Process -Filter \"Name='sweep.exe'\" | Where-Object { \$_.ExecutablePath -like '*cargo-targets*' }).Count
-      \$wn = @(Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { \$_.CommandLine -like '*Sweep?EBWebView-Dev*' }).Count
-      Write-Output ('[reap] remaining dev: '+\$rn+' sweep, '+\$wn+' webview')
+      \$rn = @(Get-CimInstance Win32_Process -Filter \"Name='crumbtrail.exe'\" | Where-Object { \$_.ExecutablePath -like '*cargo-targets*' }).Count
+      \$wn = @(Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { \$_.CommandLine -like '*Crumbtrail?EBWebView-Dev*' }).Count
+      Write-Output ('[reap] remaining dev: '+\$rn+' crumbtrail, '+\$wn+' webview')
     "
     ;;
   doctor)
@@ -591,15 +591,15 @@ case "$cmd" in
         echo "  ✓ WebView2 CDP ($cdp_port): port IS bound (so the wrapper just needs a (re)start: npm run cdp:serve)"
       else
         echo "  ✗ WebView2 CDP ($cdp_port): port NOT bound"
-        # 3) is a dev sweep.exe even running?
-        devpids="$(powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"Name='sweep.exe'\" | Where-Object { \$_.ExecutablePath -like '*cargo-targets*' -or \$_.ExecutablePath -like '*src-tauri\\target*' }).ProcessId -join ','" 2>/dev/null | tr -d '\r')"
+        # 3) is a dev crumbtrail.exe even running?
+        devpids="$(powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"Name='crumbtrail.exe'\" | Where-Object { \$_.ExecutablePath -like '*cargo-targets*' -or \$_.ExecutablePath -like '*src-tauri\\target*' }).ProcessId -join ','" 2>/dev/null | tr -d '\r')"
         if [ -z "$devpids" ]; then
           echo "     → the dev app isn't running.  Launch it:  pwsh -NoProfile -File scripts/run-dev-deelevated.ps1 -WaitForCdp"
         else
           echo "     → dev app IS running (PID $devpids) but CDP didn't bind. Checking elevation…"
           # 4) ELEVATION — the WebView2 150.x killer
           elev="$(powershell -NoProfile -Command "\$id=[System.Security.Principal.WindowsIdentity]::GetCurrent(); (New-Object System.Security.Principal.WindowsPrincipal(\$id)).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)" 2>/dev/null | tr -d '\r ')"
-          wv_dbg="$(powershell -NoProfile -Command "\$p=Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { \$_.CommandLine -like '*Sweep?EBWebView-Dev*' -and \$_.CommandLine -notlike '*--type=*' } | Select-Object -First 1; if(\$p){[bool](\$p.CommandLine -match 'remote-debugging-port')}else{'no-webview'}" 2>/dev/null | tr -d '\r ')"
+          wv_dbg="$(powershell -NoProfile -Command "\$p=Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { \$_.CommandLine -like '*Crumbtrail?EBWebView-Dev*' -and \$_.CommandLine -notlike '*--type=*' } | Select-Object -First 1; if(\$p){[bool](\$p.CommandLine -match 'remote-debugging-port')}else{'no-webview'}" 2>/dev/null | tr -d '\r ')"
           echo "     · this shell elevated: $elev   · webview has debug-port arg: $wv_dbg"
           if [ "$wv_dbg" = "False" ]; then
             echo "     ┃ DIAGNOSIS: WebView2 launched WITHOUT the debug port. This is the"

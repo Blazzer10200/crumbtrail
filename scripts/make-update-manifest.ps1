@@ -12,7 +12,7 @@
 param(
   [Parameter(Mandatory)][string]$Version,
   [string]$Notes = "",
-  [string]$Repo = "Blazzer10200/sweep",
+  [string]$Repo = "Blazzer10200/crumbtrail",
   [string]$BundleDir = ""
 )
 $ErrorActionPreference = 'Stop'

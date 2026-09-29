@@ -1,4 +1,4 @@
-# run-dev-deelevated.ps1 — the ONE reliable way to launch Sweep dev with working
+# run-dev-deelevated.ps1 — the ONE reliable way to launch Crumbtrail dev with working
 # CDP from ANY shell (elevated or not), with zero orphan sprawl.
 #
 # WHY THIS EXISTS: WebView2 Runtime 150.x added a "trusted origin check" that
@@ -12,9 +12,9 @@
 #   pwsh -NoProfile -File scripts\run-dev-deelevated.ps1 -WaitForCdp # launch + block until :9222 is up
 #
 # It ALWAYS kills stale dev instances first (the sprawl fix): every launch starts
-# from a known-clean slate. Scope is STRICT — only sweep.exe under the dev target
-# dir (cargo-targets / src-tauri\target) + its Sweep EBWebView-Dev webview + vite
-# on :1420. Never touches an installed prod Sweep (different path + user-data-dir).
+# from a known-clean slate. Scope is STRICT — only crumbtrail.exe under the dev target
+# dir (cargo-targets / src-tauri\target) + its Crumbtrail EBWebView-Dev webview + vite
+# on :1420. Never touches an installed prod Crumbtrail (different path + user-data-dir).
 
 param(
   [switch]$WaitForCdp,   # block until CDP :9222 responds (up to 180s), then return
@@ -23,9 +23,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$DEV_UDD_GLOB = '*Sweep?EBWebView-Dev*'   # -like wildcard; ? matches the backslash
+$DEV_UDD_GLOB = '*Crumbtrail?EBWebView-Dev*'   # -like wildcard; ? matches the backslash
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222 --remote-allow-origins=*"
-$env:WEBVIEW2_USER_DATA_FOLDER = "$env:LOCALAPPDATA\Sweep\EBWebView-Dev"
+$env:WEBVIEW2_USER_DATA_FOLDER = "$env:LOCALAPPDATA\Crumbtrail\EBWebView-Dev"
 
 function Test-Elevated {
   $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -35,7 +35,7 @@ function Test-Elevated {
 # --- Kill-stale-first: remove any prior dev instance so launches never sprawl. ---
 function Stop-StaleDev {
   $killed = 0
-  Get-CimInstance Win32_Process -Filter "Name='sweep.exe'" |
+  Get-CimInstance Win32_Process -Filter "Name='crumbtrail.exe'" |
     Where-Object { $_.ExecutablePath -like '*cargo-targets*' -or $_.ExecutablePath -like '*src-tauri\target*' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $killed++ }
   Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
@@ -62,16 +62,16 @@ if (-not $NoKill) { Stop-StaleDev }
 # they reach the (medium-IL) child regardless of how the task host seeds env.
 $devCmd = @"
 set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 --remote-allow-origins=*"
-set "WEBVIEW2_USER_DATA_FOLDER=%LOCALAPPDATA%\Sweep\EBWebView-Dev"
+set "WEBVIEW2_USER_DATA_FOLDER=%LOCALAPPDATA%\Crumbtrail\EBWebView-Dev"
 cd /d "$repo"
 call npm run tauri dev
 "@
-$batPath = Join-Path $env:TEMP "sweep-dev-deelevated.bat"
+$batPath = Join-Path $env:TEMP "crumbtrail-dev-deelevated.bat"
 Set-Content -LiteralPath $batPath -Value $devCmd -Encoding ASCII
 
 if (Test-Elevated) {
   Write-Output "[dev] shell IS elevated — de-elevating to medium IL (WebView2 150.x CDP fix)"
-  $taskName = "SweepDevDeElevated"
+  $taskName = "CrumbtrailDevDeElevated"
   $user = "$env:USERDOMAIN\$env:USERNAME"
   schtasks /Delete /TN $taskName /F *>$null
   # /RL LIMITED = run as the interactive user at their DEFAULT (medium) level.

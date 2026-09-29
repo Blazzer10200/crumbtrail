@@ -1,4 +1,4 @@
-# Sweep
+# Crumbtrail
 
 A small Windows app that shows you exactly what junk is eating your disk — temp files, stale caches, update leftovers, gaming and dev caches — and clears only what you approve.
 
@@ -10,7 +10,7 @@ Grab the installer from [Releases](../../releases), run it, done. No accounts, n
 
 > **First run:** Windows SmartScreen shows "Windows protected your PC" because the installer isn't code-signed. Click **More info → Run anyway**. That's normal for unsigned indie tools.
 
-**Automatic updates** (v0.4.0+): Sweep checks for a new version on launch and shows an "Install & restart" banner when one's available — or check manually with the header button. Updates are cryptographically signed and verified before installing, so they're safe even though the app isn't Authenticode-signed. (The first build with the updater is v0.4.0; install that one manually, then future updates are automatic.)
+**Automatic updates** (v0.4.0+): Crumbtrail checks for a new version on launch and shows an "Install & restart" banner when one's available — or check manually with the header button. Updates are cryptographically signed and verified before installing, so they're safe even though the app isn't Authenticode-signed. (The first build with the updater is v0.4.0; install that one manually, then future updates are automatic.)
 
 ## Two tabs
 
@@ -42,7 +42,7 @@ Light and dark themes are both supported — toggle with the sun/moon button in 
 - **Locked files are skipped, never forced** — files in use by running apps are left alone and reported.
 - **Symlinks and junctions are never followed.**
 - **Temp files younger than 48 hours are always kept** — they may belong to running apps.
-- **Every deletion is logged** to `%LOCALAPPDATA%\Sweep\logs`.
+- **Every deletion is logged** to `%LOCALAPPDATA%\Crumbtrail\logs`.
 - **No registry cleaning. Ever.**
 
 Riskier items (Windows Update leftovers, Recycle Bin) are marked **confirm** and get an extra confirmation step. System temp and Windows Update cleanup need admin — use the "Restart as admin" button.

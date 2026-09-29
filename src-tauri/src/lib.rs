@@ -43,7 +43,10 @@ fn clean(app: AppHandle, ids: Vec<String>) {
         let cats = build_categories();
         let admin = is_elevated();
         let mut log: Vec<String> = Vec::new();
-        log.push(format!("Sweep run {}", chrono::Local::now().to_rfc3339()));
+        log.push(format!(
+            "Crumbtrail run {}",
+            chrono::Local::now().to_rfc3339()
+        ));
         let mut total = 0u64;
         for cat in cats.iter().filter(|c| ids.iter().any(|id| id == c.id)) {
             if cat.needs_admin && !admin {
@@ -141,11 +144,11 @@ fn write_log(lines: &[String]) -> String {
     let dir = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
-        .join("Sweep")
+        .join("Crumbtrail")
         .join("logs");
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join(format!(
-        "sweep-{}.log",
+        "crumbtrail-{}.log",
         chrono::Local::now().format("%Y%m%d-%H%M%S")
     ));
     let _ = std::fs::write(&path, lines.join("\n"));
