@@ -26,10 +26,12 @@ if (-not $BundleDir) {
 }
 if (-not $BundleDir) { throw "No NSIS bundle dir found — run 'npm run tauri build' first." }
 
-$setup = Get-ChildItem (Join-Path $BundleDir "*-setup.exe") -ErrorAction SilentlyContinue | Select-Object -First 1
-$sig = Get-ChildItem (Join-Path $BundleDir "*-setup.exe.sig") -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $setup) { throw "No *-setup.exe in $BundleDir" }
-if (-not $sig) { throw "No *-setup.exe.sig in $BundleDir — did you build with TAURI_SIGNING_PRIVATE_KEY set?" }
+# The bundle dir may be a shared cargo target holding other apps' installers —
+# match this app + version exactly, and take the .sig that belongs to that setup.
+$setup = Get-ChildItem (Join-Path $BundleDir "Crumbtrail_${Version}_*-setup.exe") -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $setup) { throw "No Crumbtrail_${Version}_*-setup.exe in $BundleDir" }
+$sig = Get-Item -LiteralPath "$($setup.FullName).sig" -ErrorAction SilentlyContinue
+if (-not $sig) { throw "No $($setup.Name).sig in $BundleDir — did you build with TAURI_SIGNING_PRIVATE_KEY set?" }
 
 $signature = (Get-Content -LiteralPath $sig.FullName -Raw).Trim()
 $url = "https://github.com/$Repo/releases/download/v$Version/$($setup.Name)"

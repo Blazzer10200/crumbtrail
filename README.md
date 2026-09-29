@@ -10,7 +10,7 @@ Grab the installer from [Releases](../../releases), run it, done. No accounts, n
 
 > **First run:** Windows SmartScreen shows "Windows protected your PC" because the installer isn't code-signed. Click **More info → Run anyway**. That's normal for unsigned indie tools.
 
-**Automatic updates** (v0.4.0+): Crumbtrail checks for a new version on launch and shows an "Install & restart" banner when one's available — or check manually with the header button. Updates are cryptographically signed and verified before installing, so they're safe even though the app isn't Authenticode-signed. (The first build with the updater is v0.4.0; install that one manually, then future updates are automatic.)
+**Automatic updates** (v0.5.0+): Crumbtrail checks for a new version on launch and shows an "Install & restart" banner when one's available — or check manually with the version button in the header. Updates are cryptographically signed and verified before installing, so they're safe even though the app isn't Authenticode-signed. (v0.5.0 is the first published release with the updater; if you're on v0.2.x or older, install it manually once, then future updates are automatic.)
 
 ## Two tabs
 
@@ -33,7 +33,7 @@ Categories that don't exist on your PC show as "Not found" and are left alone. S
 
 Full 2 TB drive scans in under 20 seconds. **View-only — the Space tab never deletes anything.**
 
-Light and dark themes are both supported — toggle with the sun/moon button in the header (it remembers your choice; otherwise it follows Windows).
+Dark theme by default, with a light theme on the sun/moon button in the header (it remembers your choice). The window uses its own title bar so the whole app is one continuous surface.
 
 ## Safety rules (baked into the core)
 
@@ -45,7 +45,7 @@ Light and dark themes are both supported — toggle with the sun/moon button in 
 - **Every deletion is logged** to `%LOCALAPPDATA%\Crumbtrail\logs`.
 - **No registry cleaning. Ever.**
 
-Riskier items (Windows Update leftovers, Recycle Bin) are marked **confirm** and get an extra confirmation step. System temp and Windows Update cleanup need admin — use the "Restart as admin" button.
+Every row has an **ⓘ** button that explains, in plain words, what cleaning it does and where it lives. Riskier items (Windows Update leftovers, Recycle Bin) sit under **More options** and are off by default. Before anything is deleted you always get a review sheet listing each item and its size, with anything permanent (Recycle Bin) called out. System temp and Windows Update cleanup need admin — use the "Restart as admin" button.
 
 ## Building from source
 
@@ -70,8 +70,8 @@ $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "$env:USERPROFILE\.tauri\sweep-upd
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
 npm run tauri build
 # 3. generate the update manifest
-pwsh -NoProfile -File scripts\make-update-manifest.ps1 -Version 0.4.0 -Notes "What changed"
-# 4. create a GitHub Release tagged v0.4.0 and upload the -setup.exe + latest.json
+pwsh -NoProfile -File scripts\make-update-manifest.ps1 -Version X.Y.Z -Notes "What changed"
+# 4. create a GitHub Release tagged vX.Y.Z and upload the -setup.exe + latest.json
 ```
 
 Installed apps fetch `releases/latest/download/latest.json`, compare versions, and download + verify the signed installer before applying. **Keep `~/.tauri/sweep-updater.key` safe and private** — it's what proves an update is genuinely from you.
