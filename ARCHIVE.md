@@ -1,5 +1,8 @@
 # Sweep archival snapshot — 2026-09-03
 
+> **Unarchived 2026-09-29 — development has resumed.** This file is kept as a
+> historical record and for its release/signing-key guidance below.
+
 ## Status
 
 Sweep is archived at the owner's request. Application source remains at version
