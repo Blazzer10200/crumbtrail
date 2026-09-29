@@ -23,7 +23,9 @@ fn too_new(meta: &fs::Metadata, age_hours: Option<u64>) -> bool {
     let Some(h) = age_hours else { return false };
     match meta.modified() {
         Ok(m) => {
-            SystemTime::now().duration_since(m).unwrap_or(Duration::ZERO)
+            SystemTime::now()
+                .duration_since(m)
+                .unwrap_or(Duration::ZERO)
                 < Duration::from_secs(h * 3600)
         }
         // Can't read the timestamp — leave the file alone.
@@ -45,7 +47,11 @@ pub fn scan_category(cat: &Category) -> ScanResult {
     match cat.kind {
         Kind::RecycleBin => {
             let (bytes, files) = recycle_bin_query();
-            ScanResult { id: cat.id, bytes, files }
+            ScanResult {
+                id: cat.id,
+                bytes,
+                files,
+            }
         }
         Kind::Files => {
             let mut bytes = 0u64;
@@ -71,7 +77,11 @@ pub fn scan_category(cat: &Category) -> ScanResult {
                     }
                 }
             }
-            ScanResult { id: cat.id, bytes, files }
+            ScanResult {
+                id: cat.id,
+                bytes,
+                files,
+            }
         }
     }
 }
@@ -86,9 +96,19 @@ pub fn clean_category(cat: &Category, log: &mut Vec<String>) -> CleanResult {
                 cat.id, bytes, files, ok
             ));
             if ok {
-                CleanResult { id: cat.id, freed_bytes: bytes, deleted: files, skipped: 0 }
+                CleanResult {
+                    id: cat.id,
+                    freed_bytes: bytes,
+                    deleted: files,
+                    skipped: 0,
+                }
             } else {
-                CleanResult { id: cat.id, freed_bytes: 0, deleted: 0, skipped: files }
+                CleanResult {
+                    id: cat.id,
+                    freed_bytes: 0,
+                    deleted: 0,
+                    skipped: files,
+                }
             }
         }
         Kind::Files => {
@@ -96,8 +116,7 @@ pub fn clean_category(cat: &Category, log: &mut Vec<String>) -> CleanResult {
             let mut deleted = 0u64;
             let mut skipped = 0u64;
             for root in &cat.paths {
-                let (f, d, s) =
-                    delete_tree(root, cat.age_hours, cat.file_prefixes, log, cat.id);
+                let (f, d, s) = delete_tree(root, cat.age_hours, cat.file_prefixes, log, cat.id);
                 freed += f;
                 deleted += d;
                 skipped += s;
@@ -106,7 +125,12 @@ pub fn clean_category(cat: &Category, log: &mut Vec<String>) -> CleanResult {
                 "[{}] freed {} bytes, deleted {}, skipped {}",
                 cat.id, freed, deleted, skipped
             ));
-            CleanResult { id: cat.id, freed_bytes: freed, deleted, skipped }
+            CleanResult {
+                id: cat.id,
+                freed_bytes: freed,
+                deleted,
+                skipped,
+            }
         }
     }
 }
@@ -160,10 +184,7 @@ pub fn delete_tree(
             .into_iter()
             .filter_map(|e| e.ok())
         {
-            if entry.file_type().is_dir()
-                && !entry.path_is_symlink()
-                && entry.path() != root
-            {
+            if entry.file_type().is_dir() && !entry.path_is_symlink() && entry.path() != root {
                 let _ = fs::remove_dir(entry.path());
             }
         }
@@ -200,6 +221,32 @@ fn recycle_bin_empty() -> bool {
             SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND,
         )
         .is_ok()
+    }
+}
+
+pub fn is_elevated() -> bool {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut elev = TOKEN_ELEVATION { TokenIsElevated: 0 };
+        let mut len = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elev as *mut TOKEN_ELEVATION as *mut core::ffi::c_void),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut len,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        ok && elev.TokenIsElevated != 0
     }
 }
 
@@ -259,11 +306,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("thumbcache_256.db"), vec![0u8; 10]).unwrap();
         fs::write(tmp.path().join("settings.dat"), vec![0u8; 20]).unwrap();
-        let c = cat(
-            vec![tmp.path().to_path_buf()],
-            None,
-            Some(&["thumbcache_"]),
-        );
+        let c = cat(vec![tmp.path().to_path_buf()], None, Some(&["thumbcache_"]));
 
         let scan = scan_category(&c);
         assert_eq!((scan.bytes, scan.files), (10, 1));
@@ -309,31 +352,5 @@ mod tests {
         clean_category(&c, &mut Vec::new());
         assert!(precious.exists());
         assert!(outside.path().exists());
-    }
-}
-
-pub fn is_elevated() -> bool {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Security::{
-        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
-    };
-    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-    unsafe {
-        let mut token = HANDLE::default();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
-            return false;
-        }
-        let mut elev = TOKEN_ELEVATION { TokenIsElevated: 0 };
-        let mut len = 0u32;
-        let ok = GetTokenInformation(
-            token,
-            TokenElevation,
-            Some(&mut elev as *mut TOKEN_ELEVATION as *mut core::ffi::c_void),
-            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-            &mut len,
-        )
-        .is_ok();
-        let _ = CloseHandle(token);
-        ok && elev.TokenIsElevated != 0
     }
 }

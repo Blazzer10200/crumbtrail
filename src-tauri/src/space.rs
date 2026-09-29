@@ -134,7 +134,7 @@ pub fn scan_root<F: FnMut(u64, u64)>(root: &Path, mut on_progress: F) -> SpaceSc
             bytes: b,
         })
         .collect();
-    biggest.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    biggest.sort_by_key(|e| std::cmp::Reverse(e.bytes));
 
     SpaceScan {
         root: root.to_path_buf(),
@@ -159,7 +159,7 @@ pub fn children_of(scan: &SpaceScan, dir: &Path) -> Vec<FolderEntry> {
             bytes: *b,
         })
         .collect();
-    out.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    out.sort_by_key(|e| std::cmp::Reverse(e.bytes));
     out.truncate(100);
     out
 }
@@ -194,7 +194,7 @@ pub fn hotspots(scan: &SpaceScan) -> Vec<FolderEntry> {
             bytes: *b,
         })
         .collect();
-    out.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    out.sort_by_key(|e| std::cmp::Reverse(e.bytes));
     out.truncate(20);
     out
 }

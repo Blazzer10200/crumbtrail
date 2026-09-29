@@ -183,7 +183,10 @@ pub fn build_categories() -> Vec<Category> {
             risk: "safe",
             needs_admin: false,
             kind: Kind::Files,
-            paths: existing(vec![local.join("Microsoft").join("Windows").join("Explorer")]),
+            paths: existing(vec![local
+                .join("Microsoft")
+                .join("Windows")
+                .join("Explorer")]),
             age_hours: None,
             file_prefixes: Some(&["thumbcache_", "iconcache_"]),
         },
@@ -197,8 +200,16 @@ pub fn build_categories() -> Vec<Category> {
             kind: Kind::Files,
             paths: existing(vec![
                 local.join("CrashDumps"),
-                local.join("Microsoft").join("Windows").join("WER").join("ReportQueue"),
-                local.join("Microsoft").join("Windows").join("WER").join("ReportArchive"),
+                local
+                    .join("Microsoft")
+                    .join("Windows")
+                    .join("WER")
+                    .join("ReportQueue"),
+                local
+                    .join("Microsoft")
+                    .join("Windows")
+                    .join("WER")
+                    .join("ReportArchive"),
             ]),
             age_hours: None,
             file_prefixes: None,

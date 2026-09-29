@@ -50,7 +50,12 @@ fn clean(app: AppHandle, ids: Vec<String>) {
                 log.push(format!("[{}] skipped — needs admin", cat.id));
                 let _ = app.emit(
                     "clean:result",
-                    &CleanResult { id: cat.id, freed_bytes: 0, deleted: 0, skipped: 0 },
+                    &CleanResult {
+                        id: cat.id,
+                        freed_bytes: 0,
+                        deleted: 0,
+                        skipped: 0,
+                    },
                 );
                 continue;
             }
