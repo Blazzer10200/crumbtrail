@@ -5,6 +5,7 @@
   import Header from "$lib/components/Header.svelte";
   import ReviewSheet from "$lib/components/ReviewSheet.svelte";
   import SpaceTab from "$lib/components/SpaceTab.svelte";
+  import TitleBar from "$lib/components/TitleBar.svelte";
   import UpdateBar from "$lib/components/UpdateBar.svelte";
   import WelcomeCard from "$lib/components/WelcomeCard.svelte";
 
@@ -20,6 +21,7 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="shell">
+  <TitleBar />
   <Header />
   <UpdateBar />
   {#key app.tab}

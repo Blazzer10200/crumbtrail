@@ -15,8 +15,8 @@
   );
 </script>
 
-<header>
-  <div class="brand">
+<header data-tauri-drag-region>
+  <div class="brand" data-tauri-drag-region>
     <Logo size={26} dots={2} />
     <span class="name display">Crumbtrail</span>
   </div>
@@ -67,7 +67,7 @@
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    padding: 16px 24px 12px;
+    padding: 0 24px 12px;
     gap: 16px;
   }
   .brand {
