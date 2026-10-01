@@ -71,6 +71,9 @@ function ageDays(unix: number): number {
 class AppStore {
   tab = $state<"clean" | "space">("clean");
   admin = $state(false);
+  // Splash gates: ready once the first backend data is in; relaunching while the admin restart is in flight.
+  ready = $state(false);
+  relaunching = $state(false);
   theme = $state<Theme>("dark");
   version = $state("");
   welcomeOpen = $state(false);
@@ -253,6 +256,8 @@ class AppStore {
           cats.map((c) => [c.id, c.risk === "safe" && this.isSelectable(c)]),
         );
 
+        this.ready = true;
+
         void this.loadPresets();
         void this.loadSnapsC();
         void this.loadWeekly();
@@ -260,6 +265,7 @@ class AppStore {
         await this.startScan();
       } catch (e) {
         this.error = `Couldn't start: ${e}`;
+        this.ready = true;
       }
     })();
 
@@ -407,9 +413,11 @@ class AppStore {
 
   async relaunchAdmin() {
     if (this.admin || this.busy) return;
+    this.relaunching = true;
     try {
       await invoke("relaunch_admin");
     } catch (e) {
+      this.relaunching = false;
       if (String(e).includes("cancelled")) {
         this.adminCancelled = true;
         this.adminDismissed = false;

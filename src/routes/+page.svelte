@@ -4,6 +4,7 @@
   import CleanTab from "$lib/components/CleanTab.svelte";
   import Header from "$lib/components/Header.svelte";
   import ReviewSheet from "$lib/components/ReviewSheet.svelte";
+  import Splash from "$lib/components/Splash.svelte";
   import SpaceTab from "$lib/components/SpaceTab.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import UpdateBar from "$lib/components/UpdateBar.svelte";
@@ -41,6 +42,11 @@
   {/key}
   {#if app.sheetOpen}<ReviewSheet />{/if}
   {#if app.welcomeOpen}<WelcomeCard />{/if}
+  {#if app.relaunching}
+    <Splash title="Restarting as admin…" sub="Approve the Windows prompt to continue" />
+  {:else if !app.ready}
+    <Splash title="Getting ready…" />
+  {/if}
 </div>
 
 <style>
