@@ -565,7 +565,7 @@
     right: 0;
     top: calc(100% + 8px);
     z-index: 10;
-    width: 310px;
+    width: 360px;
     padding: 6px;
     background: var(--surface);
     border: 1px solid var(--line-3);
@@ -626,7 +626,7 @@
     text-wrap: pretty;
     word-break: break-word;
   }
-  .views button {
+  .views button:not(.mi) {
     position: relative;
     height: 28px;
     border: none;
