@@ -1,11 +1,27 @@
 use serde::Serialize;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 // How many of the largest individual files to keep during a scan.
 const TOP_FILES: usize = 200;
+// Biggest files kept per file type (File types view).
+const TYPE_TOP: usize = 12;
+// Unreadable folders kept by path (the count covers all of them).
+const UNREADABLE_KEEP: usize = 64;
+
+// File types view buckets, in display order.
+pub const TYPE_KEYS: [&str; 7] = [
+    "video",
+    "game",
+    "installer",
+    "archive",
+    "image",
+    "doc",
+    "other",
+];
+const GAME: usize = 1;
 
 #[derive(Default)]
 pub struct SpaceState(pub Mutex<Option<SpaceScan>>);
@@ -16,6 +32,12 @@ pub struct SpaceScan {
     pub biggest: Vec<FolderEntry>,
     pub files: u64,
     pub bytes: u64,
+    pub types: [u64; 7],
+    pub type_top: Vec<Vec<FolderEntry>>,
+    pub unreadable: Vec<String>,
+    pub unreadable_count: u64,
+    // Drive used bytes at scan time (drive-root scans only) — What changed hero number.
+    pub used_bytes: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -72,16 +94,72 @@ pub fn list_drives() -> Vec<DriveInfo> {
 }
 
 type Walk = jwalk::WalkDirGeneric<((), u64)>;
+type TopHeap = BinaryHeap<Reverse<(u64, PathBuf)>>;
+
+// Bounded min-heap: smallest of the current top-N sits at the top so we can
+// cheaply reject files that can't make the cut, only cloning paths that do.
+fn offer(heap: &mut TopHeap, cap: usize, size: u64, path: &Path) {
+    if heap.len() < cap {
+        heap.push(Reverse((size, path.to_path_buf())));
+    } else if heap.peek().is_some_and(|Reverse((min, _))| size > *min) {
+        heap.pop();
+        heap.push(Reverse((size, path.to_path_buf())));
+    }
+}
+
+fn entry_of(p: &Path, bytes: u64) -> FolderEntry {
+    FolderEntry {
+        name: p
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.display().to_string()),
+        path: p.display().to_string(),
+        bytes,
+    }
+}
+
+fn sorted(heap: TopHeap) -> Vec<FolderEntry> {
+    let mut v: Vec<FolderEntry> = heap
+        .into_iter()
+        .map(|Reverse((b, p))| entry_of(&p, b))
+        .collect();
+    v.sort_by_key(|e| Reverse(e.bytes));
+    v
+}
+
+/// Extension bucket for the File types view (game files are tagged by folder instead).
+pub fn type_of(name: &str) -> usize {
+    let lower = name.to_ascii_lowercase();
+    let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    match ext {
+        "mp4" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "m4v" => 0,
+        "msi" | "msix" | "msixbundle" | "appx" | "appxbundle" => 2,
+        "exe" if lower.contains("setup") || lower.contains("install") => 2,
+        "zip" | "7z" | "rar" | "iso" | "vhdx" | "vhd" | "tar" | "gz" | "tgz" | "bz2" | "xz" => 3,
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "heic" | "tif" | "tiff" | "psd"
+        | "raw" | "arw" | "cr2" | "cr3" | "nef" | "dng" => 4,
+        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "odt" | "rtf"
+        | "csv" | "md" => 5,
+        _ => 6,
+    }
+}
 
 // Full-drive walk: jwalk parallelizes directory reads AND the per-file
 // metadata stat (done in process_read_dir, on worker threads).
-pub fn scan_root<F: FnMut(u64, u64)>(root: &Path, mut on_progress: F) -> SpaceScan {
+// `games` holds installed game folders (exact on-disk casing) for the "game" bucket.
+pub fn scan_root<F: FnMut(u64, u64)>(
+    root: &Path,
+    games: &HashSet<PathBuf>,
+    mut on_progress: F,
+) -> SpaceScan {
     let mut dirs: HashMap<PathBuf, u64> = HashMap::new();
     let mut files = 0u64;
     let mut bytes = 0u64;
-    // Bounded min-heap: smallest of the current top-N sits at the top so we can
-    // cheaply reject files that can't make the cut, only cloning paths that do.
-    let mut top: BinaryHeap<Reverse<(u64, PathBuf)>> = BinaryHeap::new();
+    let mut top: TopHeap = BinaryHeap::new();
+    let mut types = [0u64; 7];
+    let mut type_heaps: Vec<TopHeap> = (0..7).map(|_| BinaryHeap::new()).collect();
+    let mut unreadable: Vec<String> = Vec::new();
+    let mut unreadable_count = 0u64;
     let mut last = std::time::Instant::now();
 
     let walker = Walk::new(root)
@@ -95,7 +173,21 @@ pub fn scan_root<F: FnMut(u64, u64)>(root: &Path, mut on_progress: F) -> SpaceSc
             }
         });
 
-    for entry in walker.into_iter().filter_map(|e| e.ok()) {
+    for entry in walker {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                if e.io_error().map(|io| io.kind()) == Some(std::io::ErrorKind::PermissionDenied) {
+                    unreadable_count += 1;
+                    if unreadable.len() < UNREADABLE_KEEP {
+                        if let Some(p) = e.path() {
+                            unreadable.push(p.display().to_string());
+                        }
+                    }
+                }
+                continue;
+            }
+        };
         if !entry.file_type.is_file() {
             continue;
         }
@@ -103,45 +195,46 @@ pub fn scan_root<F: FnMut(u64, u64)>(root: &Path, mut on_progress: F) -> SpaceSc
         files += 1;
         bytes += size;
         let path = entry.path();
-        if top.len() < TOP_FILES {
-            top.push(Reverse((size, path.clone())));
-        } else if top.peek().is_some_and(|Reverse((min, _))| size > *min) {
-            top.pop();
-            top.push(Reverse((size, path.clone())));
-        }
+        offer(&mut top, TOP_FILES, size, &path);
+        let mut in_game = false;
         let mut p: &Path = &path;
         while let Some(parent) = p.parent() {
             *dirs.entry(parent.to_path_buf()).or_insert(0) += size;
+            if !in_game && !games.is_empty() && games.contains(parent) {
+                in_game = true;
+            }
             if parent == root {
                 break;
             }
             p = parent;
         }
+        let t = if in_game {
+            GAME
+        } else {
+            type_of(&entry.file_name.to_string_lossy())
+        };
+        types[t] += size;
+        offer(&mut type_heaps[t], TYPE_TOP, size, &path);
         if last.elapsed().as_millis() > 400 {
             on_progress(files, bytes);
             last = std::time::Instant::now();
         }
     }
 
-    let mut biggest: Vec<FolderEntry> = top
-        .into_iter()
-        .map(|Reverse((b, p))| FolderEntry {
-            name: p
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| p.display().to_string()),
-            path: p.display().to_string(),
-            bytes: b,
-        })
-        .collect();
-    biggest.sort_by_key(|e| std::cmp::Reverse(e.bytes));
+    // Shallowest paths first: "C:\System Volume Information" reads better than its children.
+    unreadable.sort_by_key(|p| (p.matches('\\').count(), p.len()));
 
     SpaceScan {
         root: root.to_path_buf(),
         dirs,
-        biggest,
+        biggest: sorted(top),
         files,
         bytes,
+        types,
+        type_top: type_heaps.into_iter().map(sorted).collect(),
+        unreadable,
+        unreadable_count,
+        used_bytes: None,
     }
 }
 
@@ -212,7 +305,7 @@ mod tests {
         fs::write(sub.join("f1.bin"), vec![0u8; 100]).unwrap();
         fs::write(tmp.path().join("a").join("f2.bin"), vec![0u8; 50]).unwrap();
 
-        let scan = scan_root(tmp.path(), |_, _| {});
+        let scan = scan_root(tmp.path(), &HashSet::new(), |_, _| {});
         assert_eq!(scan.bytes, 150);
         assert_eq!(scan.files, 2);
         assert_eq!(scan.dirs.get(&tmp.path().join("a")).copied(), Some(150));
@@ -221,5 +314,22 @@ mod tests {
         let kids = children_of(&scan, tmp.path());
         assert_eq!(kids.len(), 1);
         assert_eq!(kids[0].bytes, 150);
+    }
+
+    #[test]
+    fn file_types_bucket_by_extension_and_game_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game = tmp.path().join("Games").join("Hades II");
+        fs::create_dir_all(&game).unwrap();
+        fs::write(game.join("content.pak"), vec![0u8; 70]).unwrap();
+        fs::write(game.join("intro.mp4"), vec![0u8; 30]).unwrap();
+        fs::write(tmp.path().join("trip.mkv"), vec![0u8; 20]).unwrap();
+        fs::write(tmp.path().join("OBS-Setup.exe"), vec![0u8; 10]).unwrap();
+        fs::write(tmp.path().join("notes.bin"), vec![0u8; 5]).unwrap();
+
+        let games: HashSet<PathBuf> = [game.clone()].into_iter().collect();
+        let scan = scan_root(tmp.path(), &games, |_, _| {});
+        assert_eq!(scan.types, [20, 100, 10, 0, 0, 0, 5]);
+        assert_eq!(scan.type_top[GAME][0].name, "content.pak");
     }
 }

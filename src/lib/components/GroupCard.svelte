@@ -222,7 +222,7 @@
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: #ececee;
+    background: var(--ink);
     transition: transform 0.35s var(--spring);
   }
   .switch.on .knob {

@@ -1,5 +1,4 @@
-/* Crumbtrail design tokens + shared primitives. Dark is the designed theme;
-   light is a provisional mapping of the same tokens until it gets its own pass. */
+/* Crumbtrail design tokens + shared primitives (v6 dark + light). */
 
 :root,
 :root[data-theme="dark"] {
@@ -33,7 +32,13 @@
   --amber-soft: #2e2612;
   --amber-panel: #231f14;
   --amber-panel-line: #3a3118;
-  --amber-text: #c9a55a;
+  --amber-text: #f4c160;
+  --sky-line: #27404f;
+  --red: #ff8a80;
+  --red-soft: #2d1a19;
+  --red-line: #5a2b28;
+  --rose: #f48fa8;
+  --docs: #e9e9ee;
   --shimmer-a: #26282b;
   --shimmer-b: #33363a;
   --scrim: rgba(0, 0, 0, 0.5);
@@ -46,44 +51,50 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f4f4f2;
+  --bg: #f3f3f0;
   --surface: #ffffff;
-  --card: #fbfbfa;
-  --row-hover: #efefec;
-  --chip-bg: #ebebe8;
-  --line: #e2e2de;
-  --line-2: #deded9;
-  --line-3: #cfcfca;
-  --line-4: #b3b4af;
-  --line-hero: #e2e2de;
-  --line-row: #ececea;
-  --ink: #17181a;
-  --ink-2: #2c2e31;
-  --muted: #5d6166;
-  --muted-2: #65696e;
-  --muted-3: #72767b;
-  --muted-4: #8a8e93;
-  --faint: #a4a7ab;
-  --accent: #22c47a;
-  --accent-ink: #06140d;
-  --accent-soft: #daf4e6;
-  --accent-line: #95d8b6;
-  --violet: #7b5ce0;
-  --sky: #1f8cc2;
-  --sky-soft: #dceff9;
-  --amber: #b27b0c;
-  --amber-soft: #faedcf;
-  --amber-panel: #fdf5e2;
-  --amber-panel-line: #ecd59f;
-  --amber-text: #986f1c;
-  --shimmer-a: #ebebe8;
-  --shimmer-b: #f7f7f5;
+  --card: #ffffff;
+  --row-hover: #f4f4f1;
+  --chip-bg: #ecece8;
+  --line: #e2e2dd;
+  --line-2: #e2e2dd;
+  --line-3: #d0d0ca;
+  --line-4: #b4b4ad;
+  --line-hero: #e2e2dd;
+  --line-row: #ecece8;
+  --ink: #1a1b1d;
+  --ink-2: #2d2f33;
+  --muted: #5b5f66;
+  --muted-2: #686c73;
+  --muted-3: #686c73;
+  --muted-4: #7d8188;
+  --faint: #a0a09a;
+  --accent: #12794a;
+  --accent-ink: #ffffff;
+  --accent-soft: #def3e7;
+  --accent-line: #a8d9bf;
+  --violet: #6a47d1;
+  --sky: #0b6b9f;
+  --sky-soft: #dcedf7;
+  --sky-line: #a9cfe4;
+  --amber: #8a5a00;
+  --amber-soft: #faecc8;
+  --amber-panel: #fdf3da;
+  --amber-panel-line: #ecd59a;
+  --amber-text: #8a5a00;
+  --red: #b3261e;
+  --red-soft: #fbe6e3;
+  --red-line: #efb4ae;
+  --rose: #b23b62;
+  --docs: #8c8f97;
+  --shimmer-a: #ecece8;
+  --shimmer-b: #dcdcd7;
   --scrim: rgba(20, 20, 22, 0.28);
-  --scrim-welcome: rgba(244, 244, 242, 0.7);
-  --shadow-primary: 0 6px 20px -10px rgba(34, 196, 122, 0.55);
+  --scrim-welcome: rgba(243, 243, 240, 0.7);
+  --shadow-primary: 0 6px 20px -10px rgba(18, 121, 74, 0.45);
   --shadow-sheet: 0 -20px 60px -20px rgba(0, 0, 0, 0.18);
   --shadow-welcome: 0 30px 80px -20px rgba(0, 0, 0, 0.22);
-  --active-ring: 0 0 0 3px rgba(34, 196, 122, 0.12);
+  --active-ring: 0 0 0 3px rgba(18, 121, 74, 0.12);
 }
 
 :root {

@@ -1,10 +1,15 @@
 mod categories;
+mod discover;
 mod engine;
+mod gpu;
+mod snapshot;
 mod space;
+mod store;
 
 use categories::{build_categories, CategoryInfo};
 use engine::{clean_category, is_elevated, scan_category, CleanResult};
 use space::SpaceState;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -18,6 +23,13 @@ fn elevated() -> bool {
     is_elevated()
 }
 
+fn panic_text(p: Box<dyn std::any::Any + Send>) -> String {
+    p.downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown error".into())
+}
+
 #[tauri::command]
 fn scan(app: AppHandle) {
     std::thread::spawn(move || {
@@ -25,13 +37,41 @@ fn scan(app: AppHandle) {
         let mut handles = Vec::new();
         for cat in cats {
             let app2 = app.clone();
-            handles.push(std::thread::spawn(move || {
-                let res = scan_category(&cat);
-                let _ = app2.emit("scan:result", &res);
-            }));
+            let id = cat.id;
+            handles.push((
+                id,
+                std::thread::spawn(move || {
+                    let res = scan_category(&cat);
+                    let _ = app2.emit("scan:result", &res);
+                }),
+            ));
         }
-        for h in handles {
-            let _ = h.join();
+        // A category that blows up stops only itself; the rest still report.
+        let mut failed: Vec<(&str, String)> = Vec::new();
+        for (id, h) in handles {
+            if let Err(p) = h.join() {
+                failed.push((id, panic_text(p)));
+            }
+        }
+        if !failed.is_empty() {
+            let mut log = vec![format!(
+                "Crumbtrail scan {}",
+                chrono::Local::now().to_rfc3339()
+            )];
+            log.extend(
+                failed
+                    .iter()
+                    .map(|(id, m)| format!("[{id}] scan failed: {m}")),
+            );
+            let log_path = write_log(&log);
+            let _ = app.emit(
+                "scan:error",
+                serde_json::json!({
+                    "ids": failed.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                    "message": failed[0].1,
+                    "log_path": log_path,
+                }),
+            );
         }
         let _ = app.emit("scan:done", ());
     });
@@ -66,10 +106,17 @@ fn clean(app: AppHandle, ids: Vec<String>) {
             total += res.freed_bytes;
             let _ = app.emit("clean:result", &res);
         }
+        let all_time = match store::add_freed(total) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                log.push(format!("all-time counter not updated: {e}"));
+                None
+            }
+        };
         let log_path = write_log(&log);
         let _ = app.emit(
             "clean:done",
-            serde_json::json!({ "total_bytes": total, "log_path": log_path }),
+            serde_json::json!({ "total_bytes": total, "log_path": log_path, "all_time": all_time }),
         );
     });
 }
@@ -79,24 +126,110 @@ fn drives() -> Vec<space::DriveInfo> {
     space::list_drives()
 }
 
+// Snapshot list for the picker, each with its net change vs. the current scan.
+fn older_snapshots(
+    scan: &space::SpaceScan,
+    drive: &str,
+    skip: Option<&str>,
+) -> Vec<serde_json::Value> {
+    let base = snapshot::dir();
+    let root = scan.root.display().to_string();
+    let is_drive = root.trim_end_matches('\\').len() <= 2;
+    let root_lc = root.trim_end_matches('\\').to_lowercase();
+    let now_root = scan.dirs.get(&scan.root).copied().unwrap_or(scan.bytes);
+    snapshot::list_in(&base, drive)
+        .into_iter()
+        .filter(|m| Some(m.id.as_str()) != skip)
+        .map(|m| {
+            let net = if is_drive {
+                Some(scan.used_bytes.unwrap_or(0) as i64 - m.used_bytes as i64)
+            } else {
+                snapshot::load_in(&base, &m.id).ok().map(|s| {
+                    let then = s
+                        .folders
+                        .iter()
+                        .find(|(p, _)| p.to_lowercase() == root_lc)
+                        .map(|(_, b)| *b)
+                        .unwrap_or(0);
+                    now_root as i64 - then as i64
+                })
+            };
+            serde_json::json!({ "id": m.id, "taken_at": m.taken_at, "used_bytes": m.used_bytes, "net": net })
+        })
+        .collect()
+}
+
 #[tauri::command]
 fn space_scan(app: AppHandle, root: String) {
     std::thread::spawn(move || {
         let root = PathBuf::from(root);
+        let root_s = root.display().to_string();
+        let drive: String = root_s.chars().take(2).collect::<String>().to_uppercase();
+        let is_drive = root_s.trim_end_matches('\\').len() <= 2;
+
+        let all_games = discover::games();
+        let game_dirs: HashSet<PathBuf> =
+            all_games.iter().map(|g| PathBuf::from(&g.path)).collect();
         let app2 = app.clone();
-        let scan = space::scan_root(&root, move |files, bytes| {
+        let mut scan = space::scan_root(&root, &game_dirs, move |files, bytes| {
             let _ = app2.emit(
                 "space:progress",
                 serde_json::json!({ "files": files, "bytes": bytes }),
             );
         });
+        scan.used_bytes = space::list_drives()
+            .into_iter()
+            .find(|d| d.letter.eq_ignore_ascii_case(&drive))
+            .map(|d| d.total.saturating_sub(d.free));
+
+        // Only whole-drive scans become snapshots; folder scans compare against them.
+        let (saved, snap_error) = match (is_drive, scan.used_bytes) {
+            (true, Some(used)) => {
+                let snap = snapshot::from_scan(&scan, &drive, used, discover::unix_now());
+                match snapshot::save_in(&snapshot::dir(), &snap) {
+                    Ok(m) => (Some(m), None),
+                    Err(e) => (None, Some(e)),
+                }
+            }
+            _ => (None, None),
+        };
+        let older = older_snapshots(&scan, &drive, saved.as_ref().map(|m| m.id.as_str()));
+
+        let games: Vec<&discover::Game> = all_games
+            .iter()
+            .filter(|g| {
+                g.path
+                    .get(..2)
+                    .is_some_and(|d| d.eq_ignore_ascii_case(&drive))
+            })
+            .collect();
+        let types: Vec<serde_json::Value> = space::TYPE_KEYS
+            .iter()
+            .zip(scan.types.iter())
+            .map(|(k, b)| serde_json::json!({ "key": k, "bytes": b }))
+            .collect();
+        let type_top: serde_json::Map<String, serde_json::Value> = space::TYPE_KEYS
+            .iter()
+            .zip(scan.type_top.iter())
+            .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+            .collect();
+
         let payload = serde_json::json!({
-            "root": scan.root.display().to_string(),
+            "root": root_s,
+            "drive": drive,
+            "is_drive": is_drive,
             "files": scan.files,
             "bytes": scan.bytes,
+            "used_bytes": scan.used_bytes,
             "hotspots": space::hotspots(&scan),
             "top": space::children_of(&scan, &scan.root),
             "biggest": &scan.biggest,
+            "unreadable": { "count": scan.unreadable_count, "paths": scan.unreadable.iter().take(3).collect::<Vec<_>>() },
+            "types": types,
+            "type_top": type_top,
+            "games": games,
+            "installers": discover::installers(),
+            "snapshots": { "saved": saved, "older": older, "error": snap_error },
         });
         *app.state::<SpaceState>().0.lock().unwrap() = Some(scan);
         let _ = app.emit("space:done", payload);
@@ -108,6 +241,15 @@ fn space_children(state: State<SpaceState>, dir: String) -> Vec<space::FolderEnt
     match &*state.0.lock().unwrap() {
         Some(scan) => space::children_of(scan, Path::new(&dir)),
         None => Vec::new(),
+    }
+}
+
+#[tauri::command]
+fn space_diff(state: State<SpaceState>, id: String) -> Result<snapshot::Diff, String> {
+    let old = snapshot::load_in(&snapshot::dir(), &id)?;
+    match &*state.0.lock().unwrap() {
+        Some(scan) => Ok(snapshot::diff(scan, &old)),
+        None => Err("Scan a drive first".into()),
     }
 }
 
@@ -125,19 +267,45 @@ fn reveal(path: String) {
 }
 
 #[tauri::command]
-fn relaunch_admin(app: AppHandle) {
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                &format!("Start-Process -FilePath '{}' -Verb RunAs", exe.display()),
-            ])
-            .spawn();
-        app.exit(0);
-    }
+fn open_launcher(launcher: String) -> Result<(), String> {
+    // Fixed URLs only — never a string from the UI.
+    let url = match launcher.as_str() {
+        "steam" => "steam://open/games",
+        "epic" => "com.epicgames.launcher://store/library",
+        other => return Err(format!("unknown launcher {other}")),
+    };
+    std::process::Command::new("explorer")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn launcher_icons() -> std::collections::HashMap<&'static str, String> {
+    discover::launcher_icons()
+}
+
+#[tauri::command]
+fn relaunch_admin(app: AppHandle) -> Result<(), String> {
+    engine::relaunch_elevated()?;
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+fn all_time_freed() -> u64 {
+    store::all_time_freed()
+}
+
+#[tauri::command]
+fn load_presets() -> Result<serde_json::Value, String> {
+    store::load_presets()
+}
+
+#[tauri::command]
+fn save_presets(presets: serde_json::Value) -> Result<(), String> {
+    store::save_presets(&presets)
 }
 
 fn write_log(lines: &[String]) -> String {
@@ -171,8 +339,14 @@ pub fn run() {
             drives,
             space_scan,
             space_children,
+            space_diff,
             reveal,
-            relaunch_admin
+            open_launcher,
+            launcher_icons,
+            relaunch_admin,
+            all_time_freed,
+            load_presets,
+            save_presets
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

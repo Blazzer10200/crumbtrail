@@ -1,3 +1,4 @@
+use crate::gpu;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -5,6 +6,9 @@ use std::path::{Path, PathBuf};
 pub enum Kind {
     Files,
     RecycleBin,
+    // `paths` are leftover folders inside this allowlisted root; each is emptied
+    // and then removed. The root itself is never touched.
+    Dirs(&'static str),
 }
 
 #[derive(Clone)]
@@ -12,7 +16,7 @@ pub struct Category {
     pub id: &'static str,
     pub name: &'static str,
     pub description: &'static str,
-    pub module: &'static str, // core | gaming | dev
+    pub module: &'static str, // core | gaming | gpu | dev
     pub risk: &'static str,   // safe | care
     pub needs_admin: bool,
     pub kind: Kind,
@@ -44,7 +48,11 @@ impl Category {
             module: self.module,
             risk: self.risk,
             needs_admin: self.needs_admin,
-            available: self.kind == Kind::RecycleBin || !self.paths.is_empty(),
+            available: match self.kind {
+                Kind::RecycleBin => true,
+                Kind::Dirs(root) => Path::new(root).is_dir(),
+                Kind::Files => !self.paths.is_empty(),
+            },
         }
     }
 }
@@ -91,7 +99,7 @@ fn firefox_caches(local: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn steam_root() -> Option<PathBuf> {
+pub fn steam_root() -> Option<PathBuf> {
     use winreg::enums::HKEY_CURRENT_USER;
     use winreg::RegKey;
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
@@ -279,6 +287,36 @@ pub fn build_categories() -> Vec<Category> {
             needs_admin: false,
             kind: Kind::Files,
             paths: existing(citizenfx),
+            age_hours: None,
+            file_prefixes: None,
+        },
+        Category {
+            id: "nvidia_installers",
+            name: "NVIDIA driver installers",
+            description: "Setup files left in C:\\NVIDIA by past driver installs",
+            module: "gpu",
+            risk: "safe",
+            needs_admin: false,
+            kind: Kind::Dirs(gpu::NVIDIA_ROOT),
+            paths: gpu::nvidia_targets(
+                Path::new(gpu::NVIDIA_ROOT),
+                gpu::installed_nvidia_version().as_deref(),
+            ),
+            age_hours: None,
+            file_prefixes: None,
+        },
+        Category {
+            id: "amd_installers",
+            name: "AMD driver installers",
+            description: "Adrenalin setup files left in C:\\AMD after past installs",
+            module: "gpu",
+            risk: "safe",
+            needs_admin: false,
+            kind: Kind::Dirs(gpu::AMD_ROOT),
+            paths: gpu::amd_targets(
+                Path::new(gpu::AMD_ROOT),
+                gpu::installed_amd_version().as_deref(),
+            ),
             age_hours: None,
             file_prefixes: None,
         },

@@ -9,6 +9,8 @@ pub struct ScanResult {
     pub id: &'static str,
     pub bytes: u64,
     pub files: u64,
+    // Folders the walk couldn't open (access denied) — the size may be a little low.
+    pub unreadable: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -51,17 +53,26 @@ pub fn scan_category(cat: &Category) -> ScanResult {
                 id: cat.id,
                 bytes,
                 files,
+                unreadable: 0,
             }
         }
-        Kind::Files => {
+        Kind::Files | Kind::Dirs(_) => {
             let mut bytes = 0u64;
             let mut files = 0u64;
+            let mut unreadable = 0u64;
             for root in &cat.paths {
-                for entry in WalkDir::new(root)
-                    .follow_links(false)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                {
+                for entry in WalkDir::new(root).follow_links(false) {
+                    let entry = match entry {
+                        Ok(e) => e,
+                        Err(e) => {
+                            if e.io_error().map(|io| io.kind())
+                                == Some(std::io::ErrorKind::PermissionDenied)
+                            {
+                                unreadable += 1;
+                            }
+                            continue;
+                        }
+                    };
                     if !entry.file_type().is_file() || entry.path_is_symlink() {
                         continue;
                     }
@@ -81,6 +92,7 @@ pub fn scan_category(cat: &Category) -> ScanResult {
                 id: cat.id,
                 bytes,
                 files,
+                unreadable,
             }
         }
     }
@@ -111,15 +123,31 @@ pub fn clean_category(cat: &Category, log: &mut Vec<String>) -> CleanResult {
                 }
             }
         }
-        Kind::Files => {
+        Kind::Files | Kind::Dirs(_) => {
             let mut freed = 0u64;
             let mut deleted = 0u64;
             let mut skipped = 0u64;
             for root in &cat.paths {
+                // Dirs: each path is a leftover folder *inside* the allowlisted root.
+                // Re-check that before touching it, then drop the folder once empty.
+                if let Kind::Dirs(parent) = cat.kind {
+                    if !crate::gpu::inside(root, std::path::Path::new(parent)) {
+                        log.push(format!(
+                            "[{}] refused {} (outside {})",
+                            cat.id,
+                            root.display(),
+                            parent
+                        ));
+                        continue;
+                    }
+                }
                 let (f, d, s) = delete_tree(root, cat.age_hours, cat.file_prefixes, log, cat.id);
                 freed += f;
                 deleted += d;
                 skipped += s;
+                if matches!(cat.kind, Kind::Dirs(_)) && fs::remove_dir(root).is_ok() {
+                    log.push(format!("[{}] rmdir {}", cat.id, root.display()));
+                }
             }
             log.push(format!(
                 "[{}] freed {} bytes, deleted {}, skipped {}",
@@ -221,6 +249,28 @@ fn recycle_bin_empty() -> bool {
             SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND,
         )
         .is_ok()
+    }
+}
+
+/// Start this exe again elevated. Waits for the UAC answer so a cancelled prompt
+/// comes back as Err("cancelled") and the current instance keeps running.
+pub fn relaunch_elevated() -> Result<(), String> {
+    use windows::core::{w, HRESULT, HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let file = HSTRING::from(exe.as_os_str());
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        lpVerb: w!("runas"),
+        lpFile: PCWSTR(file.as_ptr()),
+        nShow: 1, // SW_SHOWNORMAL
+        ..Default::default()
+    };
+    match unsafe { ShellExecuteExW(&mut info) } {
+        Ok(()) => Ok(()),
+        // ERROR_CANCELLED: the user said no to the permission prompt.
+        Err(e) if e.code() == HRESULT::from_win32(1223) => Err("cancelled".into()),
+        Err(e) => Err(e.message()),
     }
 }
 
@@ -330,6 +380,51 @@ mod tests {
         assert_eq!((res.deleted, res.skipped), (1, 0));
         assert!(!tmp.path().join("a").exists());
         assert!(tmp.path().exists());
+    }
+
+    #[test]
+    fn dirs_kind_removes_leftover_folders_but_keeps_root_and_kept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root: &'static str = Box::leak(tmp.path().display().to_string().into_boxed_str());
+        let dd = tmp.path().join("DisplayDriver");
+        for v in ["551.86", "566.36"] {
+            fs::create_dir_all(dd.join(v).join("Display.Driver")).unwrap();
+            fs::write(
+                dd.join(v).join("Display.Driver").join("nv.dll"),
+                vec![0u8; 40],
+            )
+            .unwrap();
+        }
+        let targets = crate::gpu::nvidia_targets(tmp.path(), Some("566.36"));
+        let mut c = cat(targets, None, None);
+        c.kind = Kind::Dirs(root);
+
+        let scan = scan_category(&c);
+        assert_eq!((scan.bytes, scan.files), (40, 1));
+
+        let res = clean_category(&c, &mut Vec::new());
+        assert_eq!((res.freed_bytes, res.deleted), (40, 1));
+        assert!(!dd.join("551.86").exists());
+        assert!(dd
+            .join("566.36")
+            .join("Display.Driver")
+            .join("nv.dll")
+            .exists());
+        assert!(tmp.path().exists());
+    }
+
+    #[test]
+    fn dirs_kind_refuses_paths_outside_its_root() {
+        let root = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        fs::write(other.path().join("keep.bin"), vec![0u8; 8]).unwrap();
+        let r: &'static str = Box::leak(root.path().display().to_string().into_boxed_str());
+        let mut c = cat(vec![other.path().to_path_buf()], None, None);
+        c.kind = Kind::Dirs(r);
+
+        let res = clean_category(&c, &mut Vec::new());
+        assert_eq!(res.deleted, 0);
+        assert!(other.path().join("keep.bin").exists());
     }
 
     #[test]
