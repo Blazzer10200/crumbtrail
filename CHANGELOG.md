@@ -1,12 +1,14 @@
 # Changelog
 
-## 0.6.0 — unreleased
+## 0.6.0 — 2026-10-01
 
+- **Updates install themselves.** Crumbtrail now updates through Velopack: it downloads new versions quietly in the background, then offers "Restart now". If you ignore it, the update installs the next time you close the app. Coming from 0.5.0? Uninstall it and install this version once. Your presets and snapshots are kept.
+- **Weekly snapshots.** Turn on "Save a snapshot every week" (Space → What changed) and a quiet Windows scheduled task records folder sizes on C: once a week, so "What changed" always has something to compare against. Uninstalling Crumbtrail removes the task.
 - **Old GPU driver installers.** New Clean group for leftover NVIDIA/AMD installer folders. The installed driver version is always kept; if it can't be read, nothing is deleted.
 - **Presets.** Save the current selection as a preset and re-apply it in one click (none ship by default).
 - **All-time freed** stat in the hero, kept across sessions.
 - **Clearer errors.** A scan that stops early, unreadable folders, a cancelled admin prompt, and partly-failed cleans all get their own message. "Retry skipped" re-runs just the items that were skipped.
-- **Update banner** now shows checking / available / downloading / ready / failed / up to date. "Hide" replaces "Cancel" (a started download can't be aborted).
+- **Update banner** now shows checking / downloading / ready / failed / up to date, and explains when a copy can't update itself.
 - **Space: What changed.** Each drive scan saves a snapshot; the next scan shows which folders grew or shrank. Defaults to comparing with a scan at least 6 days old.
 - **Space: More views** — Games (Steam and Epic, by size or last played), Forgotten installers (old .exe/.msi/.zip in Downloads), and File types (stacked bar + biggest files per type).
 - **Clean-tab teaser** shows how much C: grew or shrank since the last snapshot (hidden under 50 MB).

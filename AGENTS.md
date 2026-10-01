@@ -16,7 +16,8 @@ Run from the project root.
 | Frontend dev | `npm run dev` |
 | Desktop dev | `npm run tauri dev` |
 | Frontend build | `npm run build` |
-| Installer build | `npm run tauri build` |
+| Release exe | `npm run tauri build -- --no-bundle` |
+| Package + publish | `pwsh -NoProfile -File scripts/release.ps1` (`-NoUpload` to pack only) |
 | Frontend typecheck | `npm run check` |
 | Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml` |
 | Rust lint | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings` |
@@ -31,4 +32,6 @@ For cross-stack changes, verify in this order: frontend typecheck, Rust format c
 - Preserve the 48-hour floor for temp files, per-deletion logs, and the ban on registry cleaning.
 - The Space tab is view-only and must never acquire deletion behavior.
 - Keep cleaner safety invariants covered by Rust tests when modifying backend behavior.
-- The updater signing key stays outside the repository and must never appear in output.
+- Updates ship through Velopack (`src-tauri/src/updater.rs`). The pack id stays `Crumbtrail.App`: Velopack installs to and uninstall-wipes `%LOCALAPPDATA%\<packId>`, and `%LOCALAPPDATA%\Crumbtrail` holds user snapshots and logs.
+- `velopack::VelopackApp` must run first in `main`; the uninstall hook removes the weekly snapshot task.
+- Tokens and keys (e.g. `gh auth token`) must never appear in output.

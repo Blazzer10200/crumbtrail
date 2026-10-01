@@ -6,11 +6,13 @@ A small Windows app that shows you exactly what junk is eating your disk — tem
 
 ## Install
 
-Grab the installer from [Releases](../../releases), run it, done. No accounts, no background services, no runtime deps (uses the WebView2 already on Windows 10/11).
+Grab `Crumbtrail.App-win-Setup.exe` from the latest [Release](../../releases/latest), run it, done. It installs per-user (no admin prompt), adds Start menu and desktop shortcuts, and uses the WebView2 already on Windows 10/11. No accounts.
 
 > **First run:** Windows SmartScreen shows "Windows protected your PC" because the installer isn't code-signed. Click **More info → Run anyway**. That's normal for unsigned indie tools.
 
-**Automatic updates** (v0.5.0+): Crumbtrail checks for a new version on launch and shows an "Install & restart" banner when one's available — or check manually with the version button in the header. Updates are cryptographically signed and verified before installing, so they're safe even though the app isn't Authenticode-signed. (v0.5.0 is the first published release with the updater; if you're on v0.2.x or older, install it manually once, then future updates are automatic.)
+**Automatic updates** (v0.6.0+): Crumbtrail checks GitHub for a new version on launch and downloads it quietly in the background. When it's ready you get a "Restart now" banner. Ignore it and the update installs by itself the next time you close the app. You can also check by hand with the version button in the header. Updates are delivered with [Velopack](https://velopack.io).
+
+> **Coming from 0.5.0 or older?** Those used a different installer. Uninstall the old Crumbtrail from *Settings → Apps*, then install 0.6.0 once. Your presets and snapshots are kept. Every update after that is automatic.
 
 ## Two tabs
 
@@ -33,7 +35,7 @@ Categories that don't exist on your PC show as "Not found" and are left alone. S
 - **space hotspots** — the folders where space actually piles up,
 - **largest files** — the biggest individual files on the drive, with Windows-managed files (like `pagefile.sys`) tagged as *system*,
 - a **browse** view to drill into any folder and open it in Explorer,
-- **what changed** — every drive scan saves a small snapshot, so the next scan shows which folders grew or shrank,
+- **what changed** — every drive scan saves a small snapshot, so the next scan shows which folders grew or shrank. Turn on **Save a snapshot every week** and a quiet Windows scheduled task keeps the history going without you (folder sizes only; switch it off any time),
 - under **More**: installed **games** (Steam, Epic), **forgotten installers** in Downloads, and a **file types** breakdown.
 
 Full 2 TB drive scans in under 20 seconds. **View-only — the Space tab never deletes anything.**
@@ -59,27 +61,27 @@ Requires Node 20+, Rust stable, and the Tauri 2 prerequisites for Windows.
 ```
 npm install
 npm run tauri dev     # run in dev mode
-npm run tauri build   # produce the installer (src-tauri/target/release/bundle)
+npm run tauri build -- --no-bundle   # release exe only; installers come from scripts/release.ps1
 ```
 
-Stack: Tauri 2 + Svelte 5 (frontend), Rust (scanner/cleaner core).
+Stack: Tauri 2 + Svelte 5 (frontend), Rust (scanner/cleaner core), Velopack (installer + updates).
 
-### Releasing a new version (with auto-update)
+A dev build can't update itself; the update button says so. Only installed copies update.
 
-Updates are signed with a minisign keypair (the public key lives in `tauri.conf.json`; the private key stays off-repo). To cut a release:
+### Releasing a new version
+
+Needs the [Velopack CLI](https://docs.velopack.io) (`dotnet tool install -g vpk`) and a logged-in `gh`.
+
+1. Bump the version in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
+2. Add a dated `## X.Y.Z — YYYY-MM-DD` section to `CHANGELOG.md`. It becomes the release notes.
+3. Commit and push `main`, then run:
 
 ```
-# 1. bump the version in package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml
-# 2. build the signed installer + .sig
-$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "$env:USERPROFILE\.tauri\sweep-updater.key" -Raw)
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
-npm run tauri build
-# 3. generate the update manifest
-pwsh -NoProfile -File scripts\make-update-manifest.ps1 -Version X.Y.Z -Notes "What changed"
-# 4. create a GitHub Release tagged vX.Y.Z and upload the -setup.exe + latest.json
+pwsh -NoProfile -File scripts\release.ps1             # build, pack, publish GitHub Release vX.Y.Z
+pwsh -NoProfile -File scripts\release.ps1 -NoUpload   # or: build + pack only, to try the installer first
 ```
 
-Installed apps fetch `releases/latest/download/latest.json`, compare versions, and download + verify the signed installer before applying. **Keep `~/.tauri/sweep-updater.key` safe and private** — it's what proves an update is genuinely from you.
+The script builds the exe, packs it with `vpk` (full package, plus a delta against the previous release), and uploads everything to a GitHub Release. Installed apps find it on their next launch. Build output lives in the git-ignored `.release/` folder.
 
 ### CDP dev tooling (optional)
 

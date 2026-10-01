@@ -2,7 +2,9 @@
 
 > **Unarchived 2026-09-29 — development has resumed, and the project was renamed
 > from Sweep to Crumbtrail** (repo `Blazzer10200/crumbtrail`). This file is kept
-> as a historical record and for its release/signing-key guidance below.
+> as a historical record. Since 0.6.0, updates ship through Velopack (see README,
+> "Releasing a new version"); the Tauri updater, its manifest helper and signing
+> key described below are retired.
 
 ## Status
 

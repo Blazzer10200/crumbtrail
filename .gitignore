@@ -12,3 +12,6 @@ vite.config.ts.timestamp-*
 # Claude Code harness (local dev-state — keep out of public repo)
 /CLAUDE.md
 /HANDOFF.md
+
+# Velopack release build output (scripts/release.ps1)
+/.release
