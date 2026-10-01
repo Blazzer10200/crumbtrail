@@ -2,8 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 import type {
   Cat,
   CleanDone,
@@ -20,6 +18,8 @@ import type {
   SpaceResult,
   SpaceView,
   TypeKey,
+  UpdateCheck,
+  Weekly,
 } from "./types";
 
 // Clean choreography (ms). Real clean:result events are queued and replayed at
@@ -37,7 +37,16 @@ const WELCOMED_KEY = "crumbtrail-welcomed";
 const MIN_DELTA = 50 * 1024 ** 2;
 
 type Theme = "dark" | "light";
-type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "restarting" | "current" | "failed";
+type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "restarting"
+  | "current"
+  | "failed"
+  | "unsupported";
 
 function readStorage(key: string): string | null {
   try {
@@ -68,12 +77,17 @@ class AppStore {
   // One open popover/menu at a time: "more", "snap", "save", "preset:<id>".
   popover = $state<string | null>(null);
 
-  update = $state.raw<Update | null>(null);
   updateStatus = $state<UpdateStatus>("idle");
+  updateVersion = $state("");
+  updateNotes = $state("");
   updateError = $state("");
   updateHidden = $state(false);
-  dlDone = $state(0);
+  dlPct = $state(0);
   dlTotal = $state(0);
+
+  weekly = $state.raw<Weekly | null>(null);
+  weeklyBusy = $state(false);
+  weeklyError = $state("");
 
   // ---- Clean ----
   cats = $state.raw<Cat[]>([]);
@@ -170,7 +184,6 @@ class AppStore {
   private cleanDone: CleanDone | null = null;
   private pumping = false;
   private nextSlot = 0;
-  private dlToken = 0;
 
   isSelectable(c: Cat): boolean {
     return c.available && !(c.needs_admin && !this.admin);
@@ -208,6 +221,18 @@ class AppStore {
             this.spaceProgress = e.payload;
           }),
           listen<SpaceResult>("space:done", (e) => this.onSpaceDone(e.payload)),
+          listen<number>("update:progress", (e) => {
+            this.dlPct = e.payload;
+          }),
+          listen("update:done", () => {
+            this.updateStatus = "ready";
+            this.updateHidden = false;
+          }),
+          listen<string>("update:error", (e) => {
+            this.updateError = e.payload;
+            this.updateStatus = "available";
+            this.updateHidden = false;
+          }),
         ]);
         if (disposed) return ls.forEach((u) => u());
         unlisteners.push(...ls);
@@ -230,6 +255,7 @@ class AppStore {
 
         void this.loadPresets();
         void this.loadSnapsC();
+        void this.loadWeekly();
         void this.checkForUpdates(false);
         await this.startScan();
       } catch (e) {
@@ -281,21 +307,35 @@ class AppStore {
 
   // ---- updates ----
 
+  /** Launch check is silent and downloads in the background; a manual check shows the banner. */
   async checkForUpdates(manual: boolean) {
     const s = this.updateStatus;
-    if (s === "checking" || s === "downloading" || s === "restarting") return;
-    // An update is already known: the chip just brings its banner back.
-    if (this.update && (s === "available" || s === "ready")) {
-      this.updateHidden = false;
+    // Already in motion or known: the chip just brings the banner back.
+    if (["checking", "downloading", "restarting", "ready"].includes(s)) {
+      if (manual) this.updateHidden = false;
       return;
     }
+    if (s === "available") return this.downloadUpdate();
     this.updateStatus = "checking";
-    this.updateHidden = false;
+    this.updateHidden = !manual;
     this.updateError = "";
     try {
-      const u = await check();
-      this.update = u;
-      this.updateStatus = u ? "available" : manual ? "current" : "idle";
+      const res = await invoke<UpdateCheck>("update_check");
+      if (res.kind === "available") {
+        this.updateVersion = res.version;
+        this.updateNotes = res.notes;
+        this.dlTotal = res.size;
+        this.updateStatus = "available";
+        await this.downloadUpdate();
+      } else if (res.kind === "ready") {
+        this.updateVersion = res.version;
+        this.updateStatus = "ready";
+        this.updateHidden = false;
+      } else if (res.kind === "unsupported") {
+        this.updateStatus = manual ? "unsupported" : "idle";
+      } else {
+        this.updateStatus = manual ? "current" : "idle";
+      }
     } catch (e) {
       console.error("Update check failed:", e);
       this.updateError = String(e);
@@ -310,43 +350,58 @@ class AppStore {
   }
 
   dismissUpdate() {
-    if (this.updateStatus === "current" || this.updateStatus === "failed") this.updateStatus = "idle";
+    const s = this.updateStatus;
+    if (s === "current" || s === "failed" || s === "unsupported") this.updateStatus = "idle";
     else this.updateHidden = true;
   }
 
+  /** Progress and the result arrive as update:* events. */
   async downloadUpdate() {
-    const u = this.update;
-    if (!u || this.updateStatus !== "available") return;
-    const token = ++this.dlToken;
+    if (this.updateStatus !== "available") return;
     this.updateStatus = "downloading";
     this.updateError = "";
-    this.dlDone = 0;
-    this.dlTotal = 0;
+    this.dlPct = 0;
     try {
-      await u.download((ev) => {
-        if (token !== this.dlToken) return;
-        if (ev.event === "Started") this.dlTotal = ev.data.contentLength ?? 0;
-        else if (ev.event === "Progress") this.dlDone += ev.data.chunkLength;
-      });
-      if (token === this.dlToken) this.updateStatus = "ready";
+      await invoke("update_download");
     } catch (e) {
-      if (token !== this.dlToken) return;
       this.updateError = String(e);
       this.updateStatus = "available";
+      this.updateHidden = false;
     }
   }
 
   async installUpdate() {
-    const u = this.update;
-    if (!u || this.updateStatus !== "ready" || this.busy) return;
+    if (this.updateStatus !== "ready" || this.busy) return;
     this.updateStatus = "restarting";
     this.updateHidden = false;
     try {
-      await u.install();
-      await relaunch();
+      await invoke("update_apply"); // closes the app on success
     } catch (e) {
       this.updateError = String(e);
       this.updateStatus = "ready";
+    }
+  }
+
+  // ---- weekly snapshot task ----
+
+  private async loadWeekly() {
+    try {
+      this.weekly = await invoke<Weekly>("weekly_status");
+    } catch (e) {
+      this.weeklyError = `Couldn't read the weekly task: ${e}`;
+    }
+  }
+
+  async setWeekly(on: boolean) {
+    if (this.weeklyBusy) return;
+    this.weeklyBusy = true;
+    this.weeklyError = "";
+    try {
+      this.weekly = await invoke<Weekly>("set_weekly", { on });
+    } catch (e) {
+      this.weeklyError = String(e);
+    } finally {
+      this.weeklyBusy = false;
     }
   }
 

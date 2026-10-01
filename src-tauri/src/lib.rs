@@ -2,9 +2,11 @@ mod categories;
 mod discover;
 mod engine;
 mod gpu;
+mod schedule;
 mod snapshot;
 mod space;
 mod store;
+mod updater;
 
 use categories::{build_categories, CategoryInfo};
 use engine::{clean_category, is_elevated, scan_category, CleanResult};
@@ -12,6 +14,7 @@ use space::SpaceState;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
+use updater::UpdateState;
 
 #[tauri::command]
 fn get_categories() -> Vec<CategoryInfo> {
@@ -295,8 +298,81 @@ fn launcher_icons() -> std::collections::HashMap<&'static str, String> {
 #[tauri::command]
 fn relaunch_admin(app: AppHandle) -> Result<(), String> {
     engine::relaunch_elevated()?;
+    updater::SKIP_APPLY_ON_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
     app.exit(0);
     Ok(())
+}
+
+// Network and schtasks calls block, so these run off the main thread.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn update_check(app: AppHandle) -> Result<updater::Check, String> {
+    blocking(move || updater::check(&app.state::<UpdateState>())).await
+}
+
+#[tauri::command]
+fn update_download(app: AppHandle, state: State<UpdateState>) -> Result<(), String> {
+    let info = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("Check for updates first")?;
+    updater::download(app, info);
+    Ok(())
+}
+
+#[tauri::command]
+fn update_apply() -> Result<(), String> {
+    updater::apply_and_restart()
+}
+
+#[tauri::command]
+async fn weekly_status() -> Result<schedule::Weekly, String> {
+    blocking(|| Ok(schedule::status())).await
+}
+
+#[tauri::command]
+async fn set_weekly(on: bool) -> Result<schedule::Weekly, String> {
+    blocking(move || if on { schedule::enable() } else { schedule::disable() }).await
+}
+
+/// `crumbtrail.exe --snapshot`, run by the weekly task: scan the system drive,
+/// save a snapshot, exit. No window. Failures go to the log folder.
+pub fn run_snapshot_task() {
+    let res = (|| -> Result<(), String> {
+        let drive = std::env::var("SystemDrive")
+            .unwrap_or_else(|_| "C:".into())
+            .to_uppercase();
+        let root = PathBuf::from(format!("{drive}\\"));
+        // Game folders only affect the file-type split, which snapshots don't keep.
+        let scan = space::scan_root(&root, &HashSet::new(), |_, _| {});
+        let used = space::list_drives()
+            .into_iter()
+            .find(|d| d.letter.eq_ignore_ascii_case(&drive))
+            .map(|d| d.total.saturating_sub(d.free))
+            .ok_or_else(|| format!("drive {drive} not found"))?;
+        let snap = snapshot::from_scan(&scan, &drive, used, discover::unix_now());
+        snapshot::save_in(&snapshot::dir(), &snap).map(|_| ())
+    })();
+    if let Err(e) = res {
+        write_log(&[
+            format!("Crumbtrail weekly snapshot {}", chrono::Local::now().to_rfc3339()),
+            format!("failed: {e}"),
+        ]);
+    }
+}
+
+/// Velopack uninstall hook: don't leave the weekly task behind.
+pub fn remove_weekly_task() {
+    let _ = schedule::disable();
 }
 
 #[tauri::command]
@@ -334,9 +410,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .manage(SpaceState::default())
+        .manage(UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             get_categories,
             elevated,
@@ -353,8 +428,20 @@ pub fn run() {
             relaunch_admin,
             all_time_freed,
             load_presets,
-            save_presets
+            save_presets,
+            update_check,
+            update_download,
+            update_apply,
+            weekly_status,
+            set_weekly
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Err(e) = updater::apply_on_exit() {
+                    write_log(&[format!("update not applied on exit: {e}")]);
+                }
+            }
+        });
 }

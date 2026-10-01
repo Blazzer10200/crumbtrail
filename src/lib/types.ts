@@ -57,4 +57,12 @@ export type CleanSummary = {
 
 export type Preset = { id: string; name: string; ids: string[] };
 
+export type UpdateCheck =
+  | { kind: "none" | "unsupported" }
+  | { kind: "available"; version: string; notes: string; size: number }
+  | { kind: "ready"; version: string };
+
+/** The weekly snapshot task; next_run is unix seconds. */
+export type Weekly = { enabled: boolean; next_run: number | null };
+
 export type SpaceView = "changed" | "hot" | "big" | "browse" | "games" | "installers" | "types";

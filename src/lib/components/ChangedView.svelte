@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "$lib/app.svelte";
   import { dayCount, fmtS, parentPath, shortDate, signed, snapLabel, snapTitle } from "$lib/format";
+  import WeeklySwitch from "./WeeklySwitch.svelte";
 
   let shrankOpen = $state(true);
 
@@ -34,6 +35,9 @@
         <span class="saved">
           Snapshot saved · {shortDate(r.snapshots.saved.taken_at)} · {fmtS(r.snapshots.saved.used_bytes)} used
         </span>
+      {/if}
+      {#if r.drive === "C:"}
+        <div class="weekly-card"><WeeklySwitch /></div>
       {/if}
     {:else}
       <div class="fh display">Nothing to compare with yet</div>
@@ -80,13 +84,7 @@
           <div class="pfoot">
             Kept on this PC in <span class="mono">%LOCALAPPDATA%\Crumbtrail\snapshots</span>. Only folder names and sizes are saved.
           </div>
-          <div class="sw-row">
-            <div>
-              <div class="swt">Save a snapshot every week <span class="soon">Coming soon</span></div>
-              <div class="sws">Snapshots are only saved when you scan.</div>
-            </div>
-            <span class="switch" aria-disabled="true"><span class="knob"></span></span>
-          </div>
+          <div class="sw-row"><WeeklySwitch /></div>
         </div>
       {/if}
     </div>
@@ -317,48 +315,15 @@
     line-height: 1.45;
   }
   .sw-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 8px 10px 6px;
+    margin: 4px 0 0;
+    padding-top: 4px;
     border-top: 1px solid var(--line);
   }
-  .swt {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--muted);
-  }
-  .soon {
-    margin-left: 4px;
-    padding: 1px 6px;
-    border-radius: 99px;
-    background: var(--chip-bg);
-    font-size: 10.5px;
-    color: var(--muted-3);
-  }
-  .sws {
-    font-size: 11.5px;
-    color: var(--muted-3);
-    margin-top: 1px;
-  }
-  .switch {
-    position: relative;
-    width: 34px;
-    height: 20px;
-    border-radius: 99px;
-    background: var(--line-3);
-    flex-shrink: 0;
-    opacity: 0.6;
-  }
-  .knob {
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--ink);
+  .weekly-card {
+    width: min(400px, 100%);
+    padding: 2px;
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
   }
 
   .err {

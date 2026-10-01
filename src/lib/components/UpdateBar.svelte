@@ -8,20 +8,18 @@
 
   // First line of the release notes, if the release has any.
   const notes = $derived.by(() => {
-    const line = (app.update?.body ?? "")
+    const line = app.updateNotes
       .split("\n")
       .map((l) => l.replace(/^[#\-*\s]+/, "").trim())
       .find(Boolean);
     return line ? (line.length > 140 ? line.slice(0, 139) + "…" : line) : "";
   });
 
-  const pct = $derived(app.dlTotal ? Math.min(100, Math.round((app.dlDone / app.dlTotal) * 100)) : 0);
-
   type Banner = { icon: string; tone: string; title: string; sub: string };
 
   const banner = $derived.by((): Banner | null => {
     if (app.updateHidden && app.updateStatus !== "restarting") return null;
-    const v = app.update?.version ?? "";
+    const v = app.updateVersion;
     switch (app.updateStatus) {
       case "available":
         return {
@@ -34,15 +32,22 @@
         return {
           icon: "↓",
           tone: "sky",
-          title: `Downloading ${v}${app.dlTotal ? ` · ${pct}%` : ""}`,
-          sub: `${app.dlTotal ? `${(app.dlDone / MB).toFixed(1)} of ${(app.dlTotal / MB).toFixed(0)} MB` : `${(app.dlDone / MB).toFixed(1)} MB so far`}. You can keep using Crumbtrail. Nothing restarts until you say so.`,
+          title: `Downloading ${v} · ${app.dlPct}%`,
+          sub: `${app.dlTotal ? `${((app.dlTotal * app.dlPct) / 100 / MB).toFixed(1)} of ${(app.dlTotal / MB).toFixed(1)} MB. ` : ""}You can keep using Crumbtrail. Nothing restarts until you say so.`,
         };
       case "ready":
         return {
           icon: "✓",
           tone: "accent",
-          title: "Update ready to install",
-          sub: "Crumbtrail closes and reopens in a few seconds. Your presets and snapshots stay as they are.",
+          title: `Crumbtrail ${v} is ready`,
+          sub: "Restart now to finish, or it installs by itself next time you close Crumbtrail. Your presets and snapshots stay as they are.",
+        };
+      case "unsupported":
+        return {
+          icon: "i",
+          tone: "soft",
+          title: "Updates work in the installed app",
+          sub: "This copy wasn't installed with the Crumbtrail installer, so it can't update itself. Get the installer from GitHub Releases.",
         };
       case "restarting":
         return { icon: "↻", tone: "sky", title: "Restarting Crumbtrail…", sub: `Installing ${v}. This takes a few seconds.` };
@@ -74,7 +79,7 @@
         <div class="title">{banner.title}</div>
         <div class="sub">{banner.sub}</div>
         {#if app.updateStatus === "downloading"}
-          <div class="track"><div class="fill" style:width="{app.dlTotal ? pct : 8}%"></div></div>
+          <div class="track"><div class="fill" style:width="{Math.max(4, app.dlPct)}%"></div></div>
         {/if}
         {#if app.updateError && (app.updateStatus === "available" || app.updateStatus === "ready")}
           <div class="err">Update failed: {app.updateError}</div>
@@ -83,19 +88,19 @@
       <div class="btns">
         {#if app.updateStatus === "available"}
           <button class="btn-secondary sm" onclick={() => app.dismissUpdate()}>Later</button>
-          <button class="btn-primary sm" onclick={() => app.downloadUpdate()}>Download update</button>
+          <button class="btn-primary sm" onclick={() => app.downloadUpdate()}>{app.updateError ? "Try again" : "Download update"}</button>
         {:else if app.updateStatus === "downloading"}
-          <!-- The updater can't abort a download, so this only hides the banner; the chip keeps showing progress. -->
+          <!-- A started download can't be aborted, so this only hides the banner; the chip keeps showing progress. -->
           <button class="btn-secondary sm" onclick={() => app.dismissUpdate()}>Hide</button>
         {:else if app.updateStatus === "ready"}
-          <button class="btn-secondary sm" onclick={() => app.dismissUpdate()}>Not now</button>
+          <button class="btn-secondary sm" onclick={() => app.dismissUpdate()}>Later</button>
           <button
             class="btn-primary sm"
             disabled={app.busy}
             title={app.busy ? "Wait for the scan or clean to finish" : ""}
-            onclick={() => app.installUpdate()}>{app.busy ? "Finish cleaning first" : "Install & restart"}</button
+            onclick={() => app.installUpdate()}>{app.busy ? "Finish cleaning first" : "Restart now"}</button
           >
-        {:else if app.updateStatus === "current"}
+        {:else if app.updateStatus === "current" || app.updateStatus === "unsupported"}
           <button class="btn-secondary sm" onclick={() => app.dismissUpdate()}>Dismiss</button>
         {:else if app.updateStatus === "failed"}
           <button class="btn-secondary sm" onclick={() => app.dismissUpdate()}>Dismiss</button>

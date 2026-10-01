@@ -7,9 +7,9 @@
       case "checking":
         return "Checking…";
       case "available":
-        return `Update · ${app.update?.version ?? ""}`;
+        return `Update · ${app.updateVersion}`;
       case "downloading":
-        return "Downloading…";
+        return app.dlPct ? `Updating · ${app.dlPct}%` : "Updating…";
       case "ready":
         return "Restart to update";
       case "restarting":
