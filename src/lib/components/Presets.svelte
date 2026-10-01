@@ -21,6 +21,14 @@
     node.select();
   }
 
+  // Panels hang off their chip, so near a window edge they clip (the Save panel did with no presets). Nudge back inside.
+  function inView(node: HTMLElement) {
+    const { left, right } = node.getBoundingClientRect();
+    const pad = 12;
+    const dx = left < pad ? pad - left : right > innerWidth - pad ? innerWidth - pad - right : 0;
+    if (dx) node.style.translate = `${dx}px`;
+  }
+
   function startRename(p: Preset) {
     app.popover = null;
     renaming = p.id;
@@ -86,7 +94,7 @@
       </div>
 
       {#if app.popover === `preset:${p.id}`}
-        <div class="pop menu" role="menu">
+        <div class="pop menu" role="menu" use:inView>
           {#if confirmDel === p.id}
             <div class="confirm">
               <div class="ct">Delete “{p.name}”?</div>
@@ -112,7 +120,7 @@
   <div class="chip-wrap" data-pop>
     <button class="add" aria-expanded={app.popover === "save"} onclick={openSave}>+ Save selection</button>
     {#if app.popover === "save"}
-      <div class="pop save" role="dialog" aria-label="Save this selection">
+      <div class="pop save" role="dialog" aria-label="Save this selection" use:inView>
         <div class="st">Save this selection</div>
         <div class="si">
           {plural(app.checkedIds.length, "checked item", "checked items")} ({fmt(checkedBytes)} right now) will be saved. Give it a name
