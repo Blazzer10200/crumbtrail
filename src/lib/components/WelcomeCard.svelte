@@ -14,6 +14,10 @@
       "Nothing forced",
       "Files in use are skipped, and every deletion is logged so you can see exactly what happened.",
     ],
+    [
+      "Space only looks",
+      "The Space tab shows where your storage went. It can open folders in Explorer, but it never deletes anything.",
+    ],
   ];
 </script>
 

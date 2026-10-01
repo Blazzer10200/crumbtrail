@@ -1,17 +1,63 @@
 <script lang="ts">
   // View-only by contract (AGENTS.md): this tab may reveal paths in Explorer, never delete.
+  import { tick } from "svelte";
   import { app } from "$lib/app.svelte";
-  import { SYSTEM_FILES, VIEWS } from "$lib/copy";
+  import { MORE, MORE_W, SYSTEM_FILES, VIEWS } from "$lib/copy";
   import { baseName, fmtS, parentPath, rootLabel } from "$lib/format";
-  import type { Folder } from "$lib/types";
+  import type { Folder, SpaceView } from "$lib/types";
+  import ChangedView from "./ChangedView.svelte";
+  import FileRow from "./FileRow.svelte";
+  import GamesView from "./GamesView.svelte";
+  import InstallersView from "./InstallersView.svelte";
+  import TypesView from "./TypesView.svelte";
 
   const RING = 201.06; // 2πr for r = 32
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   type Row = { key: string; name: string; path: string; bytes: number; sys: boolean; folder?: Folder };
 
   const root = $derived(rootLabel(app.spaceResult?.root ?? app.spaceRoot));
-  const viewMeta = $derived(VIEWS.find((v) => v.key === app.view) ?? VIEWS[0]);
-  const viewIndex = $derived(VIEWS.findIndex((v) => v.key === app.view));
+  const viewMeta = $derived([...VIEWS, ...MORE].find((v) => v.key === app.view) ?? VIEWS[0]);
+  // Folder scans hide the More slot: games, installers and file types are drive-wide.
+  const showMore = $derived(!!app.spaceResult?.is_drive);
+  const moreActive = $derived(MORE.find((v) => v.key === app.view) ?? null);
+  const slots = $derived([
+    ...VIEWS.map((v) => ({ key: v.key as SpaceView | "more", label: v.label, w: v.w })),
+    ...(showMore ? [{ key: "more" as const, label: moreActive?.label ?? "More", w: moreActive?.w ?? MORE_W }] : []),
+  ]);
+  const thumb = $derived.by(() => {
+    const key = moreActive ? "more" : app.view;
+    const i = Math.max(0, slots.findIndex((s) => s.key === key));
+    return { x: slots.slice(0, i).reduce((a, s) => a + s.w, 0), w: slots[i]?.w ?? 0 };
+  });
+  const hasSnap = $derived((app.spaceResult?.snapshots.older.length ?? 0) > 0);
+
+  function moreMeta(key: SpaceView): string {
+    const r = app.spaceResult;
+    if (!r) return "";
+    if (key === "games") return `${r.games.length} installed`;
+    if (key === "installers") {
+      const n = r.installers && r.installers.dir.slice(0, 2).toUpperCase() === r.drive ? r.installers.old.length : 0;
+      return `${n} ${n === 1 ? "file" : "files"}`;
+    }
+    return `${r.types.filter((t) => t.bytes > 0).length} types`;
+  }
+
+  function unreadableText(paths: string[], count: number): string {
+    const shown = paths.length < 2 ? (paths[0] ?? "") : `${paths.slice(0, -1).join(", ")} and ${paths[paths.length - 1]}`;
+    const rest = count - paths.length;
+    return rest > 0 ? `${shown} and ${rest.toLocaleString()} more` : shown;
+  }
+
+  // Bring fresh results into view once per finished scan (not on tab remount).
+  let resultEl = $state<HTMLDivElement>();
+  let seenTick = app.spaceTick;
+  $effect(() => {
+    const t = app.spaceTick;
+    if (t === seenTick) return;
+    seenTick = t;
+    void tick().then(() => resultEl?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" }));
+  });
 
   const rows = $derived.by((): Row[] => {
     const r = app.spaceResult;
@@ -117,7 +163,19 @@
     </div>
   {:else}
     {@const r = app.spaceResult}
-    <div class="result">
+    <div class="result" bind:this={resultEl}>
+      {#if r.unreadable.count > 0}
+        <div class="unread">
+          <span class="utext">
+            {r.unreadable.count === 1 ? "1 folder" : `${r.unreadable.count.toLocaleString()} folders`} couldn't be read (access
+            denied): {unreadableText(r.unreadable.paths, r.unreadable.count)}. Totals here may be a little low.
+          </span>
+          {#if !app.admin}
+            <button class="btn-secondary sm" onclick={() => app.relaunchAdmin()}>Restart as admin</button>
+          {/if}
+        </div>
+      {/if}
+
       <div class="rhead">
         <div class="rtext">
           <div class="rt display">What's using space on {root}</div>
@@ -125,73 +183,89 @@
         </div>
         <span class="spacer"></span>
         <div class="views" role="tablist">
-          <div class="vthumb" style:transform="translateX({viewIndex * 112}px)"></div>
-          {#each VIEWS as v (v.key)}
-            <button role="tab" aria-selected={app.view === v.key} class:on={app.view === v.key} onclick={() => app.setView(v.key)}>
-              {v.label}
-            </button>
+          <div class="vthumb" style:transform="translateX({thumb.x}px)" style:width="{thumb.w}px"></div>
+          {#each slots as s (s.key)}
+            {#if s.key === "more"}
+              <div class="more-wrap" data-pop>
+                <button
+                  role="tab"
+                  aria-selected={!!moreActive}
+                  aria-haspopup="menu"
+                  aria-expanded={app.popover === "more"}
+                  class:on={!!moreActive}
+                  style:width="{s.w}px"
+                  onclick={() => app.togglePopover("more")}>{s.label} ▾</button
+                >
+                {#if app.popover === "more"}
+                  <div class="menu" role="menu">
+                    {#each MORE as m (m.key)}
+                      <button class="mi" role="menuitem" class:cur={app.view === m.key} onclick={() => app.setView(m.key)}>
+                        <span class="dot" style:background={m.color}></span>
+                        <span class="mtext">
+                          <span class="ml">{m.label}</span>
+                          <span class="md">{m.desc}</span>
+                        </span>
+                        <span class="mono mm">{moreMeta(m.key)}</span>
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {:else}
+              <button
+                role="tab"
+                aria-selected={app.view === s.key}
+                class:on={app.view === s.key}
+                style:width="{s.w}px"
+                onclick={() => app.setView(s.key as SpaceView)}
+              >
+                {s.label}
+                {#if s.key === "changed" && hasSnap && app.view !== "changed"}<span class="adot"></span>{/if}
+              </button>
+            {/if}
           {/each}
         </div>
       </div>
 
       <div class="panel">
         <div class="hint">{viewMeta.hint}</div>
-        {#if app.view === "browse"}
-          <div class="crumbs">
-            {#each [{ name: root, i: -1 }, ...app.crumbs.map((c, i) => ({ name: c.name, i }))] as cr, n (cr.i)}
-              {#if n > 0}<span class="sep">›</span>{/if}
-              <button class="crumb" class:cur={n === app.crumbs.length} onclick={() => app.jumpTo(cr.i)}>{cr.name}</button>
-            {/each}
-          </div>
+        {#if app.view === "changed"}
+          <ChangedView />
+        {:else if app.view === "games"}
+          <GamesView />
+        {:else if app.view === "installers"}
+          <InstallersView />
+        {:else if app.view === "types"}
+          <TypesView />
+        {:else}
+          {#if app.view === "browse"}
+            <div class="crumbs">
+              {#each [{ name: root, i: -1 }, ...app.crumbs.map((c, i) => ({ name: c.name, i }))] as cr, n (cr.i)}
+                {#if n > 0}<span class="sep">›</span>{/if}
+                <button class="crumb" class:cur={n === app.crumbs.length} onclick={() => app.jumpTo(cr.i)}>{cr.name}</button>
+              {/each}
+            </div>
+          {/if}
+          {#key app.rowsKey}
+            <div class="rows">
+              {#each rows as row, i (row.key)}
+                <FileRow
+                  rank={i + 1}
+                  name={row.name}
+                  path={row.path}
+                  bytes={row.bytes}
+                  {max}
+                  color={viewMeta.color}
+                  sys={row.sys}
+                  kid={!!row.folder}
+                  delay={i * 45}
+                  onrow={() => onRow(row)}
+                  onopen={() => app.reveal(fullPath(row))}
+                />
+              {/each}
+            </div>
+          {/key}
         {/if}
-        {#key app.rowsKey}
-          <div class="rows">
-            {#each rows as row, i (row.key)}
-              <div
-                class="row"
-                role="button"
-                tabindex="0"
-                title={row.folder ? "Look inside" : "Open in Explorer"}
-                onclick={() => onRow(row)}
-                onkeydown={(e) => {
-                  if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
-                    e.preventDefault();
-                    onRow(row);
-                  }
-                }}
-              >
-                <span class="rank mono">{i + 1}</span>
-                <div class="rmain">
-                  <div class="rname">
-                    <span class="nm">{row.name}</span>
-                    {#if row.sys}<span class="sys" title="Managed by Windows. Not a file you can delete.">system</span>{/if}
-                    {#if row.folder}<span class="kid">›</span>{/if}
-                  </div>
-                  {#if row.path}
-                    <div class="rpath"><bdi dir="ltr">{row.path}</bdi></div>
-                  {/if}
-                  <div class="rbar">
-                    <div
-                      class="fill"
-                      style:background={viewMeta.color}
-                      style:width="{Math.max(2, (row.bytes / max) * 100).toFixed(1)}%"
-                      style:animation-delay="{i * 45}ms"
-                    ></div>
-                  </div>
-                </div>
-                <span class="rsize mono">{fmtS(row.bytes)}</span>
-                <button
-                  class="open"
-                  title="Open in Explorer"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    app.reveal(fullPath(row));
-                  }}>Open</button
-                >
-              </div>
-            {/each}
-          </div>
-        {/key}
       </div>
     </div>
   {/if}
@@ -467,15 +541,93 @@
     position: absolute;
     top: 3px;
     left: 3px;
-    width: 112px;
     height: 28px;
     border-radius: 999px;
     background: var(--line-2);
-    transition: transform 0.45s var(--spring);
+    transition:
+      transform 0.45s var(--spring),
+      width 0.45s var(--spring);
+  }
+  .adot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 4px;
+    border-radius: 50%;
+    background: var(--amber);
+    vertical-align: middle;
+  }
+  .more-wrap {
+    position: relative;
+  }
+  .menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    z-index: 10;
+    width: 310px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line-3);
+    border-radius: 14px;
+    box-shadow: var(--shadow-welcome);
+    animation: fade-in 0.18s ease;
+  }
+  .mi {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--ink);
+    text-align: left;
+    cursor: pointer;
+  }
+  .mi:hover,
+  .mi.cur {
+    background: var(--row-hover);
+  }
+  .mtext {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .ml {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .md {
+    font-size: 11.5px;
+    color: var(--muted-3);
+  }
+  .mm {
+    font-size: 11.5px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .unread {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 9px 9px 14px;
+    border-radius: 12px;
+    background: var(--amber-panel);
+    border: 1px solid var(--amber-panel-line);
+    color: var(--amber);
+    font-size: 12.5px;
+  }
+  .utext {
+    flex: 1;
+    min-width: 0;
+    text-wrap: pretty;
+    word-break: break-word;
   }
   .views button {
     position: relative;
-    width: 112px;
     height: 28px;
     border: none;
     background: transparent;
@@ -535,100 +687,5 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 10px;
-    border-radius: 9px;
-    cursor: pointer;
-  }
-  .row:hover {
-    background: var(--row-hover);
-  }
-  .rank {
-    width: 22px;
-    font-size: 11px;
-    color: var(--faint);
-    text-align: right;
-    flex-shrink: 0;
-  }
-  .rmain {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .rname {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
-  .nm {
-    font-size: 13px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .sys {
-    font-size: 10.5px;
-    font-weight: 600;
-    padding: 1px 7px;
-    border-radius: 99px;
-    background: var(--chip-bg);
-    color: var(--muted);
-    flex-shrink: 0;
-  }
-  .kid {
-    font-size: 12px;
-    color: var(--faint);
-    flex-shrink: 0;
-  }
-  .rpath {
-    font-size: 11px;
-    color: var(--muted-3);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    direction: rtl;
-    text-align: left;
-  }
-  .rbar {
-    height: 5px;
-    border-radius: 5px;
-    background: var(--chip-bg);
-    overflow: hidden;
-  }
-  .fill {
-    height: 100%;
-    border-radius: 5px;
-    animation: grow-width 0.8s var(--ease-out) both;
-  }
-  .rsize {
-    font-weight: 600;
-    font-size: 13px;
-    min-width: 78px;
-    text-align: right;
-    flex-shrink: 0;
-  }
-  .open {
-    height: 26px;
-    padding: 0 10px;
-    border-radius: 99px;
-    border: 1px solid var(--line-3);
-    background: transparent;
-    color: var(--muted);
-    font-size: 11.5px;
-    font-weight: 600;
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-  .open:hover {
-    color: var(--ink);
-    border-color: var(--line-4);
   }
 </style>

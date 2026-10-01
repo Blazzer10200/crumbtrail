@@ -3,7 +3,7 @@
   import { cubicOut } from "svelte/easing";
   import { app } from "$lib/app.svelte";
   import { MODS } from "$lib/copy";
-  import { fmt, plural } from "$lib/format";
+  import { fmt, gb1, plural } from "$lib/format";
 
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const shown = new Tween(app.heroTarget, { duration: reduced ? 0 : 650, easing: cubicOut });
@@ -37,6 +37,13 @@
         color: "var(--accent)",
         anim: "",
         sub: "See the summary below for what was removed.",
+      };
+    if (app.scanError)
+      return {
+        label: "Scan stopped early",
+        color: "var(--red)",
+        anim: "",
+        sub: `${app.scanStep} of ${app.selectableCats.length} items were measured. You can still clean those.`,
       };
     return {
       label: "Ready · choose what to clean",
@@ -107,6 +114,9 @@
 <section class="hero">
   <div class="burst" bind:this={burstEl}></div>
   <div class="glow" style:opacity={app.glow}></div>
+  {#if app.allTime > 0}
+    <div class="alltime" class:done={app.done}><span class="ck">✓</span>Crumbtrail has freed {gb1(app.allTime)}</div>
+  {/if}
 
   <div class="top">
     <div class="left">
@@ -171,6 +181,24 @@
     background: var(--accent);
     transition: opacity 0.8s ease;
     pointer-events: none;
+  }
+  .alltime {
+    position: absolute;
+    top: 14px;
+    right: 18px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    color: var(--muted-3);
+    transition: color 0.5s;
+  }
+  .alltime.done {
+    color: var(--accent);
+  }
+  .ck {
+    font-size: 10px;
   }
   .top {
     position: relative;

@@ -13,12 +13,18 @@
 
   function onKey(e: KeyboardEvent) {
     if (e.key !== "Escape") return;
-    if (app.welcomeOpen) app.closeWelcome();
+    if (app.popover) app.popover = null;
+    else if (app.welcomeOpen) app.closeWelcome();
     else if (app.sheetOpen) app.closeSheet();
+  }
+
+  // A click outside any popover (and its trigger, both inside [data-pop]) closes it.
+  function onPointer(e: PointerEvent) {
+    if (app.popover && !(e.target as Element).closest?.("[data-pop]")) app.popover = null;
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onpointerdown={onPointer} />
 
 <div class="shell">
   <TitleBar />

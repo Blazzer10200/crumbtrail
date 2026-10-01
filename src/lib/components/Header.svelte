@@ -2,17 +2,26 @@
   import { app } from "$lib/app.svelte";
   import Logo from "./Logo.svelte";
 
-  const updLabel = $derived(
-    app.updateStatus === "checking"
-      ? "Checking…"
-      : app.updateStatus === "current"
-        ? "✓ Up to date"
-        : app.updateStatus === "failed"
-          ? "Check failed"
-          : app.version
-            ? `v${app.version}`
-            : "Updates",
-  );
+  const updLabel = $derived.by(() => {
+    switch (app.updateStatus) {
+      case "checking":
+        return "Checking…";
+      case "available":
+        return `Update · ${app.update?.version ?? ""}`;
+      case "downloading":
+        return "Downloading…";
+      case "ready":
+        return "Restart to update";
+      case "restarting":
+        return "Restarting…";
+      case "current":
+        return "✓ Up to date";
+      case "failed":
+        return "Couldn't check";
+      default:
+        return app.version ? `v${app.version}` : "Updates";
+    }
+  });
 </script>
 
 <header data-tauri-drag-region>
@@ -50,10 +59,12 @@
       class="pill ghost"
       class:ok={app.updateStatus === "current"}
       class:bad={app.updateStatus === "failed"}
+      class:upd={app.updateStatus === "available"}
+      aria-label="Version and updates: {updLabel}"
       title={app.updateStatus === "failed" ? app.updateError : "Check for updates"}
       onclick={() => app.checkForUpdates(true)}
     >
-      {updLabel}
+      {#if app.updateStatus === "available"}<span class="udot"></span>{/if}{updLabel}
     </button>
     <button class="round" title="How Crumbtrail works" onclick={() => app.openWelcome()}>?</button>
     <button class="round theme" aria-label="Toggle theme" title="Toggle theme" onclick={() => app.toggleTheme()}>
@@ -171,6 +182,19 @@
   }
   .ghost.bad {
     color: var(--amber);
+  }
+  .ghost.upd {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--sky);
+    border-color: var(--sky-line);
+  }
+  .udot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--sky);
   }
   .ghost:hover,
   .round:hover {

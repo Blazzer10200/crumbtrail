@@ -253,6 +253,12 @@ fn space_diff(state: State<SpaceState>, id: String) -> Result<snapshot::Diff, St
     }
 }
 
+// Clean-tab teaser: compares live used space against the last saved snapshot.
+#[tauri::command]
+fn snapshots(drive: String) -> Vec<snapshot::SnapMeta> {
+    snapshot::list_in(&snapshot::dir(), &drive.to_uppercase())
+}
+
 #[tauri::command]
 fn reveal(path: String) {
     let p = Path::new(&path);
@@ -340,6 +346,7 @@ pub fn run() {
             space_scan,
             space_children,
             space_diff,
+            snapshots,
             reveal,
             open_launcher,
             launcher_icons,

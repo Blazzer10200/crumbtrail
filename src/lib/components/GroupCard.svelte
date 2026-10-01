@@ -113,6 +113,12 @@
                 >
               </div>
               <div class="desc">{c.available ? c.description : "Not found on this PC"}</div>
+              {#if ok && size?.unreadable}
+                <div class="unread">
+                  ! Couldn't read {size.unreadable === 1 ? "1 folder" : `${size.unreadable.toLocaleString()} folders`} (access
+                  denied). The size may be a little low.
+                </div>
+              {/if}
               {#if INFO[c.id]}
                 <div class="collapse" class:open={infoOpen}>
                   <div class="clip">
@@ -129,6 +135,8 @@
             <div class="size">
               {#if !ok}
                 <span class="dimlabel">{c.available ? "needs admin" : "—"}</span>
+              {:else if !app.scanning && !size && app.scanError}
+                <span class="dimlabel">not measured</span>
               {:else}
                 {#if app.scanning && !size}<div class="shimmer"></div>{/if}
                 <div class="sz" class:in={!!size}>
@@ -378,6 +386,12 @@
     color: var(--muted-2);
     font-size: 12px;
     margin-top: 1px;
+    text-wrap: pretty;
+  }
+  .unread {
+    font-size: 12px;
+    color: var(--amber);
+    margin-top: 3px;
     text-wrap: pretty;
   }
   .main .collapse {
