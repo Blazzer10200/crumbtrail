@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Smoother launch.** The window opens dark with no white flash, and a short "Getting ready…" screen shows until the first data is in. Light-theme users get a light background instead.
+- **Restart as admin** shows a "Restarting as admin…" screen while Windows asks for permission, and no longer flashes a command prompt (debug builds were missing the no-console flag).
+- **Fixed:** the footer said "8 of 11 items checked" while 10 boxes were ticked; it now counts every checked item. When nothing in the checked items can be cleaned, it says so.
+- **Fixed:** the Clean/Space pill no longer drifts sideways when the update chip changes; the chip now sits next to the app name.
+- **Fixed:** the Save-selection and preset menus no longer hang off the edge of the window.
+
 ## 0.6.0 — 2026-10-01
 
 - **Updates install themselves.** Crumbtrail now updates through Velopack: it downloads new versions quietly in the background, then offers "Restart now". If you ignore it, the update installs the next time you close the app. Coming from 0.5.0? Uninstall it and install this version once. Your presets and snapshots are kept.
