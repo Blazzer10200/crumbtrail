@@ -21,6 +21,9 @@ Grab the installer from [Releases](../../releases), run it, done. No accounts, n
 | System & apps | User/system temp (48h+ old only), Windows Update leftovers, browser caches (Chrome/Edge/Firefox), thumbnail caches, crash dumps, Recycle Bin |
 | Gaming | DirectX shader cache, NVIDIA shader caches, Steam shader cache, FiveM/RedM cache |
 | Developer | npm cache, pip cache, Cargo registry cache |
+| GPU | Old NVIDIA/AMD driver installer folders (the installed version is always kept) |
+
+Save any selection as a **preset** to re-apply it later. The hero also shows how much Crumbtrail has freed all-time.
 
 Categories that don't exist on your PC show as "Not found" and are left alone. Shader caches rebuild automatically — first game launch afterward is slightly slower, then back to normal.
 
@@ -29,7 +32,9 @@ Categories that don't exist on your PC show as "Not found" and are left alone. S
 - a **usage ring** per drive with used / free / total at a glance,
 - **space hotspots** — the folders where space actually piles up,
 - **largest files** — the biggest individual files on the drive, with Windows-managed files (like `pagefile.sys`) tagged as *system*,
-- a **browse** view to drill into any folder and open it in Explorer.
+- a **browse** view to drill into any folder and open it in Explorer,
+- **what changed** — every drive scan saves a small snapshot, so the next scan shows which folders grew or shrank,
+- under **More**: installed **games** (Steam, Epic), **forgotten installers** in Downloads, and a **file types** breakdown.
 
 Full 2 TB drive scans in under 20 seconds. **View-only — the Space tab never deletes anything.**
 
