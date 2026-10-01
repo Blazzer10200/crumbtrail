@@ -841,3 +841,6 @@ class AppStore {
 }
 
 export const app = new AppStore();
+
+// Dev only: the CDP harness (scripts/cdp) reads exact store state from here instead of scraping the DOM.
+if (import.meta.env.DEV && typeof window !== "undefined") (window as unknown as { __crumb: AppStore }).__crumb = app;
