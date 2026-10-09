@@ -3,7 +3,7 @@
 ## Unreleased
 
 - **Smoother launch.** The window opens dark with no white flash, and a short "Getting ready…" screen shows until the first data is in. Light-theme users get a light background instead.
-- **Restart as admin** shows a "Restarting as admin…" screen while Windows asks for permission, and no longer flashes a command prompt (debug builds were missing the no-console flag).
+- **Restart as admin** shows a "Restarting as admin…" screen while Windows asks for permission.
 - **Fixed:** the footer said "8 of 11 items checked" while 10 boxes were ticked; it now counts every checked item. When nothing in the checked items can be cleaned, it says so.
 - **Fixed:** the Clean/Space pill no longer drifts sideways when the update chip changes; the chip now sits next to the app name.
 - **Fixed:** the Save-selection and preset menus no longer hang off the edge of the window.
