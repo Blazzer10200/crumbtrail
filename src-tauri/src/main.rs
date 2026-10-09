@@ -1,5 +1,6 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// No console window, in release or debug. A debug build (the dev app, and its "Restart as admin"
+// relaunch) used to flash a command prompt. Piped stdout/stderr from `tauri dev` still work. DO NOT REMOVE!!
+#![windows_subsystem = "windows"]
 
 fn main() {
     // Must run first: handles install/update/uninstall hooks and applies a

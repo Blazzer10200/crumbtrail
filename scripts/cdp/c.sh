@@ -1,52 +1,32 @@
 #!/usr/bin/env bash
-# c.sh - thin curl wrapper for the CDP server. Usage:
-#   bash scripts/cdp/c.sh health
-#   bash scripts/cdp/c.sh targets                        # list main + browser targets
-#   bash scripts/cdp/c.sh look                           # VERIFY PRIMITIVE: state+errors+shot in ONE call
-#   bash scripts/cdp/c.sh look ".chat"                   # same, screenshot clipped to a selector
-#   bash scripts/cdp/c.sh peek                           # look WITHOUT the shot (state+errors, 0 img tokens)
-#   bash scripts/cdp/c.sh find "Send"                    # locate elements by TEXT/aria — returns robust selectors
-#   bash scripts/cdp/c.sh text ".chat"                   # rendered text content, exact (no shot, no ax caps)
-#   bash scripts/cdp/c.sh errors                         # console errors, CURRENT page-gen only (--all incl. stale)
-#   bash scripts/cdp/c.sh eval "document.title"
-#   bash scripts/cdp/c.sh type ".assistant textarea" "hello world" Enter
-#   bash scripts/cdp/c.sh click "button.sendbtn"
-#   bash scripts/cdp/c.sh act click '[aria-label="Settings"]'   # click+quiesce+look, ONE call (errors LOUD)
-#   bash scripts/cdp/c.sh act key "Ctrl+4" ".sb-main"           # combo keypress+quiesce+look (clip to sel)
-#   bash scripts/cdp/c.sh wait "document.querySelectorAll('.bubble').length >= 2" 30000
-#   bash scripts/cdp/c.sh state                          # assistant snapshot (store-truth when dev hook present)
-#   bash scripts/cdp/c.sh page                           # generic "where am I"
-#   bash scripts/cdp/c.sh ax                             # image-FREE a11y structure (what's on screen + clickable)
-#   bash scripts/cdp/c.sh ax ".ah-wrap"                  # scope to a selector subtree
-#   bash scripts/cdp/c.sh shot                           # jpeg q65, prints path only
-#     (whole-page shots target the model's vision envelope: 2419x1512 / 4698 visual
-#      tokens on a 16:10 window — largest size Opus 4.7/4.8 ingests w/o server resize,
-#      supersampled for crisp text. Knobs: RIFT_CDP_MAX_EDGE/MAX_TOKENS/SS_FACTOR)
-#   bash scripts/cdp/c.sh shot png 0                     # png lossless
-#   bash scripts/cdp/c.sh shot jpeg 65 --json            # full JSON response
-#   bash scripts/cdp/c.sh shot-sel ".tabs-rail"          # clip to a selector
-#   bash scripts/cdp/c.sh shot-sel ".chat" jpeg 65
-#   bash scripts/cdp/c.sh batch '<json>'                 # raw batch body
-#   bash scripts/cdp/c.sh nav settings                   # jump to a workspace (chat/home/settings/ai-health/local-llm) + look
-#   bash scripts/cdp/c.sh tour chat home ai-health settings   # visit N surfaces + shot EACH in ONE round-trip (no nav→shot→nav)
-#   bash scripts/cdp/c.sh ready                          # block until app mounted + idle (no settle guessing)
-#   bash scripts/cdp/c.sh doctor                         # diagnose WHY CDP is down (wrapper/port/ELEVATION) + print the fix
-#   bash scripts/cdp/c.sh reap                           # kill ORPHANED dev procs (webview/MCP leak), keep the live instance
-#   bash scripts/cdp/c.sh reap --all                     # reap ALL dev procs incl. running instance (full reset) = npm run cdp:clean
-#   bash scripts/cdp/c.sh reload                          # hard cache-busting reload (stuck HMR)
-#   bash scripts/cdp/c.sh shutdown
+# c.sh - thin curl wrapper for the CDP server (the Crumbtrail dev window).
+# Start: `npm run cdp:dev` (de-elevated app + CDP :9222), then `npm run cdp:serve` (this API, :9223).
 #
-# FAST PATH — to verify a UI change in 2 turns instead of 5:
-#   bash scripts/cdp/c.sh look      ->  prints page summary + console errors, path on LAST line
-#   Read <that path>                ->  pixels render inline
-# `look` is the default for "did my change work" — it folds state + errors + shot together.
+#   bash scripts/cdp/c.sh look                  # VERIFY PRIMITIVE: state+errors+shot in ONE call; Read the path on the LAST line
+#   bash scripts/cdp/c.sh look ".panel"         # same, shot clipped to a selector
+#   bash scripts/cdp/c.sh peek                  # look WITHOUT the shot (state+errors, 0 image tokens)
+#   bash scripts/cdp/c.sh state                 # exact app state from window.__crumb: tab/view/popover/sheet/scans/errors
 #
-# TARGET SELECTION — observe/drive the in-app browser dock's child webview:
-#   bash scripts/cdp/c.sh -t browser shot                # screenshot the embedded page
-#   bash scripts/cdp/c.sh -t browser eval "document.title"
-#   bash scripts/cdp/c.sh -t browser page                # url/title of the embedded page
-#   RIFT_CDP_TARGET=browser bash scripts/cdp/c.sh shot   # env form
-# Default target is `main` (the Rift UI). `-t <key>` must come before the command.
+# NAVIGATE — real clicks by visible label, prerequisites included, then settle + look:
+#   bash scripts/cdp/c.sh nav space             # clean | space | changed | folders | files | browse | games | installers | types
+#   bash scripts/cdp/c.sh nav games             #   = Space tab -> More ▾ -> Games (views need a scan: c.sh scan C:)
+#   bash scripts/cdp/c.sh nav review            # opens the review sheet ("Clean 15 GB?"); `nav esc` closes it. NEVER confirms.
+#   bash scripts/cdp/c.sh nav welcome|theme|esc
+#   bash scripts/cdp/c.sh nav "Rescan"          # anything else = click that visible label
+#   bash scripts/cdp/c.sh scan C:               # Space tab -> drive card -> wait for the scan to finish -> look
+#   bash scripts/cdp/c.sh tour clean space changed games   # visit N surfaces + shot EACH in ONE round-trip
+#
+# SELECTORS (click/act/measure/...): plain CSS, or by label — survives restyles and state classes:
+#   text=Rescan   tab=Biggest folders   menuitem=Games   button=Toggle theme   "button.drive >> C:"
+#
+# INSPECT:  find "Save" · ax [sel] · text ".panel" · errors [--all] · console · measure ".hero" · shot-sel ".sheet" jpeg 70 hover
+# ACT:      act click 'tab=Space' (click+quiesce+look) · act key Escape · type "input" "text" Enter · click "<sel>" · key Escape
+# WAIT/RUN: wait "<js>" 30000 · eval "<js>" · ready (mounted + idle) · reload · batch '<json>'
+# COMPARE:  baseline / diff (before-after pixels) · shot [png 0] · shot-sel "<sel>"
+# HEALTH:   health · doctor (why is CDP down) · reap [--all] (orphaned dev procs) · reset-viewport · shutdown
+#
+# SAFETY: this drives the REAL app on the real PC. `click` refuses "Clean now", "Retry skipped" and
+# "Restart as admin" (a real clean / a UAC relaunch that kills CDP) unless serve.cjs runs with CRUMB_ALLOW_CLEAN=1.
 set -euo pipefail
 API="${RIFT_CDP_API:-http://127.0.0.1:9223}"
 TARGET="${RIFT_CDP_TARGET:-}"
@@ -85,17 +65,23 @@ LOOK_JQ='def looksum(l):
   if ($p.error) then
     ("[look] ✗ app unreachable: " + ($p.error|tostring) + " — run: bash scripts/cdp/c.sh doctor")
   else (
-    "[look] " + ($p.location // "?")
-      + " · ws=" + ($p.workspaceActiveId // "?")
-      + (if $p.model then " · model=" + ($p.model|tostring) elif $p.modelLabel then " · model=" + ($p.modelLabel|tostring) else "" end)
-      + (if $p.source == "dom" then " · (dom-scrape fallback)" else "" end)
-      + " · msgs=" + (($p.bubbleCount // 0)|tostring)
-      + " · streaming=" + (($p.streaming // false)|tostring)
-      + (if ($p.ctxPct // 0) > 0 then " · ctx=" + ($p.ctxPct|tostring) + "%" else "" end)
+    "[look] " + ($p.tab // (($p.tabs // []) | join("+")) // "?")
+      + (if $p.view then "/" + ($p.view|tostring) else "" end)
+      + (if ($p.crumbs // []) | length > 0 then " (" + ($p.crumbs | join(" › ")) + ")" else "" end)
+      + (if $p.popover then " · popover=" + ($p.popover|tostring) else "" end)
+      + (if $p.sheetOpen or $p.dialog then " · REVIEW SHEET OPEN" else "" end)
+      + (if $p.welcomeOpen then " · WELCOME CARD OPEN" else "" end)
+      + (if $p.scanning then " · scanning" else "" end)
+      + (if $p.cleaning then " · CLEANING " + ($p.cleanStep|tostring) else "" end)
+      + (if $p.spaceScanning then " · space-scanning " + ($p.spaceRoot|tostring) else "" end)
+      + (if $p.diffLoading then " · diff-loading" else "" end)
+      + (if ($p.update // "idle") != "idle" then " · update=" + ($p.update|tostring) else "" end)
+      + (if $p.source == "dom" then " · (dom-scrape fallback: no window.__crumb)" else "" end)
+      + " · " + ($p.theme // "?") + (if $p.admin == false then " · non-admin" else "" end)
+      + (if $p.selected != null then " · selected=" + ($p.selected|tostring) else "" end)
       + (if $p.vp then " · vp=" + ($p.vp.w|tostring) + "x" + ($p.vp.h|tostring) else "" end),
-    (if $p.activity then "[activity] " + ($p.activity|tostring) else empty end),
-    (if $p.lastError then "[tab-error] " + ($p.lastError|tostring|.[0:200]) else empty end),
-    (if ($p.queueLen // 0) > 0 then "[queue] " + ($p.queueLen|tostring) + " queued msg(s)" else empty end),
+    ( [ ["app-error",$p.appError], ["space-error",$p.spaceError], ["diff-error",$p.diffError], ["scan-error",$p.scanError], ["preset-note",$p.presetNote] ]
+      | .[] | select(.[1]) | "[" + .[0] + "] " + (.[1]|tostring|.[0:200]) ),
     "[errors] " + ((l.errorCount // 0)|tostring)
       + (if (l.staleErrors // 0) > 0 then " (+" + (l.staleErrors|tostring) + " stale hidden — c.sh errors --all)" else "" end),
     (l.errors[]? | "  ✗ " + (.text // "?")),
@@ -119,11 +105,49 @@ ACT_JQ='def actsum(a; tag):
   end;
 def settlesum(s):
   if (s.error) then ("[settled] ✗ " + (s.error|tostring))
-  elif (s.quiet == false) then ("[settled] " + ((s.waitedMs // 0)|tostring) + "ms CAPPED — DOM still mutating (animation/stream?)")
+  elif (s.quiet == false) then ("[settled] " + ((s.waitedMs // 0)|tostring) + "ms CAPPED — DOM mutating, or " + ((s.animating // 0)|tostring) + " animation(s) still running (shot may be mid-transition)")
   elif (s.waitedMs != null) then ("[settled] " + (s.waitedMs|tostring) + "ms quiet, " + ((s.mutations // 0)|tostring) + " mutations")
   else ("[settled] " + ((s.sleptMs // 0)|tostring) + "ms (fixed)")
   end;
 '
+
+# Crumbtrail destinations -> JSON array of click ops (shared by nav + tour). Real clicks by visible label
+# (`tab=` / `menuitem=` / `button=` / `text=`, see resolveEl in serve.cjs). Every destination clicks its
+# own prerequisites, so it works from anywhere: `games` = Space tab -> More ▾ -> Games. Safe to repeat:
+# setTab/setView close any open popover first. Popover trigger is matched by aria-haspopup because the
+# More button's text changes to the active view's name ("Games ▾").
+nav_ops() {
+  local -a steps=()
+  case "$1" in
+    clean)         steps=("tab=Clean") ;;
+    space)         steps=("tab=Space") ;;
+    changed)       steps=("tab=Space" "tab=What changed") ;;
+    folders|hot)   steps=("tab=Space" "tab=Biggest folders") ;;
+    files|big)     steps=("tab=Space" "tab=Largest files") ;;
+    browse)        steps=("tab=Space" "tab=Browse") ;;
+    games)         steps=("tab=Space" '[aria-haspopup="menu"]' "menuitem=Games") ;;
+    installers)    steps=("tab=Space" '[aria-haspopup="menu"]' "menuitem=Forgotten installers") ;;
+    types)         steps=("tab=Space" '[aria-haspopup="menu"]' "menuitem=File types") ;;
+    review)        steps=("tab=Clean" "button.go") ;;
+    welcome|help)  steps=("button=?") ;;
+    theme)         steps=("button=Toggle theme") ;;
+    esc)           ;;
+    *)             steps=("text=$1") ;;
+  esac
+  if [ "$1" = esc ]; then printf '%s' '[{"op":"key","params":{"key":"Escape"}}]'; return; fi
+  local ops='[]' i=0 s
+  for s in "${steps[@]}"; do
+    [ "$i" -gt 0 ] && ops="$(jq -c '. + [{op:"settle",params:{maxMs:200,quietMs:80}}]' <<<"$ops")"
+    ops="$(jq -c --arg s "$s" '. + [{op:"click",params:{selector:$s}}]' <<<"$ops")"
+    i=$((i + 1))
+  done
+  printf '%s' "$ops"
+}
+# Space views only exist once a scan is loaded — nav uses this to explain a miss.
+nav_needs_scan() {
+  case "$1" in changed|folders|hot|files|big|browse|games|installers|types) echo 1 ;; *) echo 0 ;; esac
+}
+
 
 case "$cmd" in
   health|state|page|targets)
@@ -399,122 +423,96 @@ case "$cmd" in
     # tiny after an interrupted shot) without a reload.
     post reset-viewport "{}"
     ;;
-  diag)
-    # Pull the live diagnostics store (events + per-subsystem health) as TEXT in
-    # one call — no UI navigation, no screenshot. Reads the dev-only
-    # window.__riftDiag hook the diagnostics store installs on init(). `$1` =
-    # how many recent events to show (default 25). The store must have been
-    # inited (open Settings once, or it inits on first listen) for the hook to
-    # exist; a null hook prints a hint.
-    n="${1:-25}"
-    js="(() => { const d = window.__riftDiag; if(!d) return JSON.stringify({error:'__riftDiag not present — open Settings once so diagnostics.init() runs, or confirm a dev build'}); return JSON.stringify({stats:d.stats(), health:d.health(), recent:d.recent($n)}); })()"
-    resp="$(post eval "$(jq -nc --arg js "$js" '{js:$js}')")"
-    printf '%s' "$resp" | jq -r '
-      (.result // .value // .) as $v |
-      ($v | if type=="string" then fromjson else . end) as $d |
-      if $d.error then "diag: " + $d.error
-      else
-        "[diag] " + (($d.stats.total // 0)|tostring) + " events · overall=" + ($d.stats.overall // "?")
-          + " · live=" + (($d.stats.live // false)|tostring)
-          + (if ($d.stats.dropped // 0) > 0 then " · " + ($d.stats.dropped|tostring) + " dropped" else "" end),
-        "[health]",
-        ($d.health[]? | "  " + (.level|ascii_upcase) + " " + .key + " — " + .detail),
-        "[recent " + (($d.recent|length)|tostring) + "]",
-        ($d.recent[]? | "  " + (.at|.[11:23]) + " " + (.level|ascii_upcase) + " [" + (.resource // "—") + "] " + .message
-          + (if (.fields|type)=="object" and (.fields|length)>0 then " " + (.fields|tojson) else "" end))
-      end'
-    ;;
   nav)
-    # nav <home|chat|settings|ai-health|local-llm|workspace> — jump to a workspace
-    # in ONE call (click the sidebar nav button by aria-label) + settle + look.
-    # No selector-hunting. Names are the friendly ids; aliased to the aria titles.
-    # Settle default 250ms: workspace switches are near-instant (measured — 150ms
-    # already lands correctly; 250 is a safe margin). For capturing SEVERAL
-    # surfaces, use `tour` instead — one round-trip for all of them.
-    dest="${1:-}"; lookSel="${2:-}"; settle="${3:-250}"
-    if [ -z "$dest" ]; then echo "usage: $0 nav <home|chat|settings|ai-health|local-llm> [lookSel] [settleMs]" >&2; exit 2; fi
-    case "$dest" in
-      home|workspace|projects) label="Workspace" ;;
-      chat)                    label="Chat" ;;
-      settings)                label="Settings" ;;
-      ai-health|health|aihealth) label="AI Health" ;;
-      local-llm|local|llm)     label="Local LLM" ;;
-      *) label="$dest" ;;  # pass a literal aria-label through
-    esac
-    sel="[aria-label=\"$label\"]"
-    clickop="$(jq -nc --arg s "$sel" '{op:"click",params:{selector:$s}}')"
-    body="$(jq -nc --argjson click "$clickop" --argjson ms "$settle" --arg ls "$lookSel" \
-      '{ops:[ $click, {op:"settle",params:{maxMs:$ms,quietMs:120}}, ({op:"look"} + (if $ls=="" then {} else {params:{selector:$ls}} end)) ]}')"
+    # nav <dest> [lookSel] [settleMs] — jump anywhere in ONE call: real clicks by visible label,
+    # prerequisites included (`nav games` = Space tab -> More ▾ -> Games), settle, then look.
+    #   dests: clean space changed folders files browse games installers types review welcome theme esc
+    #   anything else is clicked as a literal visible label:  nav "Rescan"   nav "Scan a folder…"
+    # Space views need a drive scan loaded (`c.sh scan C:`); a miss says so. Several surfaces -> `tour`.
+    dest="${1:-}"; lookSel="${2:-}"; settle="${3:-1500}"   # settleMs = CAP; returns as soon as DOM + animations are quiet
+    if [ -z "$dest" ]; then echo "usage: $0 nav <clean|space|changed|folders|files|browse|games|installers|types|review|welcome|theme|esc|\"Label\"> [lookSel] [settleMs]" >&2; exit 2; fi
+    ops="$(nav_ops "$dest")"; n="$(jq 'length' <<<"$ops")"
+    body="$(jq -nc --argjson ops "$ops" --argjson ms "$settle" --arg ls "$lookSel" \
+      '{ops: ($ops + [ {op:"settle",params:{maxMs:$ms,quietMs:120}}, ({op:"look"} + (if $ls=="" then {} else {params:{selector:$ls}} end)) ])}')"
     resp="$(post batch "$body")"
-    printf '%s' "$resp" | jq -r --arg d "$dest" "$LOOK_JQ$ACT_JQ"'
+    printf '%s' "$resp" | jq -r --arg d "$dest" --argjson n "$n" --arg ns "$(nav_needs_scan "$dest")" "$LOOK_JQ$ACT_JQ"'
       .results as $r |
-      actsum($r[0]; "nav:" + $d),
-      settlesum($r[1]),
+      ( range(0; $n; 2) as $i | actsum($r[$i]; "nav:" + $d + (if $n > 1 then "." + ((($i / 2) + 1) | floor | tostring) else "" end)) ),
+      settlesum($r[$n]),
+      (if $ns == "1" and (($r[-1].page // {}).spaceLoaded == false) then "[hint] no drive scan loaded — Space views need one: bash scripts/cdp/c.sh scan C:" else empty end),
       looksum($r[-1])'
     ;;
   tour)
-    # tour <ws1> <ws2> ... [--settle N] — visit N workspaces and screenshot EACH,
-    # all in ONE server round-trip. Kills the nav→shot→nav→shot pattern (each of
-    # which was a separate ~600-900ms call + re-reasoning between). One `tour chat
-    # home ai-health settings` = one call that returns every shot path, labeled.
-    # Default settle 250ms/surface (workspace switches are near-instant).
-    settle=250; args=()
+    # tour <dest> <dest> ... [--settle N] — visit N surfaces and screenshot EACH, all in ONE round-trip
+    # (kills nav -> shot -> nav -> shot). Dests as in `nav`. A failed click is flagged on that surface.
+    #   c.sh tour clean space changed games
+    settle=1500; args=()
     while [ $# -gt 0 ]; do
-      case "$1" in --settle) settle="${2:-250}"; shift 2 ;; *) args+=("$1"); shift ;; esac
+      case "$1" in --settle) settle="${2:-1500}"; shift 2 ;; *) args+=("$1"); shift ;; esac
     done
-    [ ${#args[@]} -eq 0 ] && { echo "usage: $0 tour <ws1> <ws2> ... [--settle N]   (ws: home|chat|settings|ai-health|local-llm)" >&2; exit 2; }
-    # Build one batch: per surface -> click nav button, sleep settle, screenshot.
-    labels=""
-    ops="$(jq -nc '[]')"
-    for ws in "${args[@]}"; do
-      case "$ws" in
-        home|workspace|projects) label="Workspace" ;;
-        chat) label="Chat" ;;
-        settings) label="Settings" ;;
-        ai-health|health|aihealth) label="AI Health" ;;
-        local-llm|local|llm) label="Local LLM" ;;
-        *) label="$ws" ;;
-      esac
-      labels="$labels $ws"
-      ops="$(jq -nc --argjson ops "$ops" --arg sel "[aria-label=\"$label\"]" --argjson ms "$settle" --arg tag "$ws" \
-        '$ops + [ {op:"click",params:{selector:$sel}}, {op:"settle",params:{maxMs:$ms,quietMs:120}}, {op:"screenshot",params:{format:"jpeg",quality:70,_tag:$tag}} ]')"
+    [ ${#args[@]} -eq 0 ] && { echo "usage: $0 tour <dest> <dest> ... [--settle N]   (dests: see nav)" >&2; exit 2; }
+    ops='[]'; plan='[]'
+    for d in "${args[@]}"; do
+      sq="$(nav_ops "$d" | jq -c --argjson ms "$settle" --arg tag "$d" \
+        '. + [ {op:"settle",params:{maxMs:$ms,quietMs:120}}, {op:"screenshot",params:{format:"jpeg",quality:70,_tag:$tag}} ]')"
+      ops="$(jq -nc --argjson a "$ops" --argjson b "$sq" '$a + $b')"
+      plan="$(jq -nc --argjson p "$plan" --arg d "$d" --argjson n "$(jq 'length' <<<"$sq")" '$p + [{d:$d,n:$n}]')"
     done
     body="$(jq -nc --argjson ops "$ops" '{ops:$ops}')"
     resp="$(post batch "$body")"
-    # Index by TRIPLET (click, settle, shot per surface) — never by filtered
-    # shot list, which silently misaligned labels whenever one click failed.
-    printf '%s' "$resp" | jq -r --arg labels "$labels" '
-      ($labels | ltrimstr(" ") | split(" ")) as $L |
-      "[tour] " + (($L|length)|tostring) + " surfaces in ONE round-trip:",
-      ( range(0; ($L|length)) as $i |
-        (.results[3*$i]) as $c | (.results[3*$i+2]) as $s |
-        "  " + ($L[$i] // "?")
-        + (if ($c.error) then "  ✗ CLICK FAILED: " + ($c.error|tostring) + " (shot shows the PREVIOUS surface)" else "" end)
-        + "  → " + (if $s then ($s.path // ("(shot failed: " + ($s.error // "?") + ")")) else "(no shot)" end) )'
+    # Each surface owns a slice of the results (its clicks + settle + shot) — index by slice, never by
+    # a filtered shot list, which misaligned labels whenever one click failed.
+    printf '%s' "$resp" | jq -r --argjson plan "$plan" '
+      .results as $r |
+      "[tour] " + (($plan|length)|tostring) + " surfaces in ONE round-trip:",
+      ( [ foreach $plan[] as $p ({off:0}; {off: (.off + $p.n), start: .off, p: $p}) ][] |
+        ($r[.start : (.start + .p.n)]) as $s | ($s[-1]) as $shot |
+        ([ $s[:-2][] | select(.error) | .error ] | first) as $bad |
+        "  " + .p.d
+        + (if $bad then "  ✗ CLICK FAILED: " + ($bad|tostring) + " (shot shows the PREVIOUS surface)" else "" end)
+        + "  → " + ($shot.path // ("(shot failed: " + ($shot.error // "?") + ")")) )'
+    ;;
+  scan)
+    # scan <C:> [timeoutSec] — Space tab -> that drive's card -> wait until the scan finishes -> look.
+    # Read-only (maps folder sizes). It does save a snapshot, exactly like a scan started from the UI.
+    drive="${1:-}"; tmo="${2:-180}"
+    if [ -z "$drive" ]; then echo "usage: $0 scan <C:|D:|...> [timeoutSec]" >&2; exit 2; fi
+    drive="$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')"; drive="${drive%:}:"
+    waitjs="(() => { const S = window.__crumb; return !!S && !S.spaceScanning && !!S.spaceResult && S.spaceRoot.toUpperCase().startsWith('$drive'); })()"
+    body="$(jq -nc --arg d "$drive" --arg js "$waitjs" --argjson t "$((tmo * 1000))" '{ops:[
+      {op:"click",params:{selector:"tab=Space"}}, {op:"settle",params:{maxMs:250,quietMs:100}},
+      {op:"click",params:{selector:("button.drive >> " + $d)}},
+      {op:"wait",params:{js:$js,timeoutMs:$t,intervalMs:500}},
+      {op:"settle",params:{maxMs:1500,quietMs:150}}, {op:"look"} ]}')"
+    resp="$(post batch "$body")"
+    printf '%s' "$resp" | jq -r "$LOOK_JQ$ACT_JQ"'
+      .results as $r |
+      actsum($r[2]; "scan:click"),
+      (if $r[3].error then "[scan] ✗ " + ($r[3].error|tostring) + " after " + (($r[3].elapsedMs // 0)|tostring) + "ms"
+       else "[scan] ✓ finished in " + (($r[3].elapsedMs // 0)|tostring) + "ms" end),
+      looksum($r[-1])'
     ;;
   ready)
-    # ready [timeoutMs] — block until the app is MOUNTED and IDLE: .app exists,
-    # fonts loaded, and NOT streaming. Kills the "guess a settle time before look"
-    # habit. Returns the page state once settled (or a timeout note).
+    # ready [timeoutMs] — block until the app is MOUNTED and IDLE: .shell exists, fonts loaded, categories
+    # loaded, and no Clean/Space scan or clean running. Kills the "guess a settle time before look" habit.
     t="${1:-30000}"
     js='(() => {
-      const app = document.querySelector(".app");
-      if (!app) return false;
+      if (!document.querySelector(".shell")) return false;
       if (document.fonts && document.fonts.status !== "loaded") return false;
-      const A = window.__assistant;
-      const streaming = !!(A && A.activeTab && A.activeTab.streaming);
-      const onboarding = !!document.querySelector(".ob-host");
-      return { mounted: true, streaming, onboarding, ws: document.documentElement.dataset.mode };
+      const S = window.__crumb;
+      if (!S) return { mounted: true, hook: false };
+      if (!S.cats.length || S.scanning || S.cleaning || S.spaceScanning) return false;
+      return { mounted: true, hook: true, tab: S.tab, welcome: S.welcomeOpen };
     })()'
     body="$(jq -nc --arg js "$js" --argjson t "$t" '{js:$js,timeoutMs:$t,intervalMs:200}')"
     resp="$(post wait "$body")"
     printf '%s' "$resp" | jq -r '
       if .error then "[ready] ✗ " + .error
       elif (.value|type)=="object" then "[ready] ✓ app mounted"
-        + (if .value.onboarding then " · ONBOARDING visible" else "" end)
-        + (if .value.streaming then " · streaming" else " · idle" end)
+        + (if .value.hook == false then " · NO window.__crumb hook (prod build? state is DOM-scrape only)" else " · idle on the " + (.value.tab // "?") + " tab" end)
+        + (if .value.welcome then " · WELCOME CARD open" else "" end)
         + "  (" + ((.elapsedMs // 0)|tostring) + "ms, " + ((.polls // 0)|tostring) + " polls)"
-      else "[ready] ✗ timed out — app never mounted (" + ((.elapsedMs // 0)|tostring) + "ms)" end'
+      else "[ready] ✗ timed out — app never mounted/idle (" + ((.elapsedMs // 0)|tostring) + "ms)" end'
     ;;
   reap|clean)
     # reap [--all] — kill ORPHANED dev processes that leak after an ungraceful
@@ -566,7 +564,7 @@ case "$cmd" in
     # WebView2 150.x). Turns a bare "fetch failed" into an actionable next step.
     cdp_host="${RIFT_CDP_HOST:-127.0.0.1}"; cdp_port="${RIFT_CDP_PORT:-9222}"
     api_ok=0; cdp_ok=0
-    echo "[doctor] Rift CDP diagnostic"
+    echo "[doctor] Crumbtrail CDP diagnostic"
     # 1) wrapper on 9223
     if curl -sS --max-time 3 "$API/health" >/dev/null 2>&1; then
       hb="$(curl -sS --max-time 3 "$API/health" 2>/dev/null)"
@@ -616,7 +614,7 @@ case "$cmd" in
     curl -sS -X POST "$API/shutdown" 2>/dev/null || true
     ;;
   *)
-    echo "usage: $0 [-t main|browser] {health|doctor|reap|targets|look|peek|act|nav|tour|ready|state|page|ax|find|text|errors|measure|console|eval|type|click|wait|shot|shot-sel|baseline|diff|batch|key|reload|reset-viewport|diag|shutdown} ..." >&2
+    echo "usage: $0 [-t main|browser] {health|doctor|reap|targets|look|peek|act|nav|tour|scan|ready|state|page|ax|find|text|errors|measure|console|eval|type|click|wait|shot|shot-sel|baseline|diff|batch|key|reload|reset-viewport|shutdown} ..." >&2
     exit 2
     ;;
 esac

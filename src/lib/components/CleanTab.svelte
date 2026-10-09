@@ -20,7 +20,7 @@
         ? "Scanning your PC…"
         : app.scanError
           ? `Scan incomplete · ${plural(app.selected.length, "measured item", "measured items")} checked · ${fmt(app.selectedBytes)}`
-          : `${app.selected.length} of ${app.selectableCats.length} items checked · ${fmt(app.selectedBytes)}`,
+          : `${app.checkedIds.length} of ${app.selectableCats.length} items checked · ${fmt(app.selectedBytes)}`,
   );
   const primaryLabel = $derived(
     app.done
@@ -157,7 +157,9 @@
       {app.done
         ? "Nothing else was touched. Rescan any time."
         : nothing
-          ? "Tick items above or pick a preset, then press Clean."
+          ? app.checkedIds.length
+            ? "Nothing to clean in the checked items right now."
+            : "Tick items above or pick a preset, then press Clean."
           : "Only checked items are removed. Press ⓘ on any row to see what it does."}
     </div>
   </div>

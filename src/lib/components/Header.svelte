@@ -28,6 +28,17 @@
   <div class="brand" data-tauri-drag-region>
     <Logo size={26} dots={2} />
     <span class="name display">Crumbtrail</span>
+    <button
+      class="pill ghost"
+      class:ok={app.updateStatus === "current"}
+      class:bad={app.updateStatus === "failed"}
+      class:upd={app.updateStatus === "available"}
+      aria-label="Version and updates: {updLabel}"
+      title={app.updateStatus === "failed" ? app.updateError : "Check for updates"}
+      onclick={() => app.checkForUpdates(true)}
+    >
+      {#if app.updateStatus === "available"}<span class="udot"></span>{/if}{updLabel}
+    </button>
   </div>
 
   <div class="tabs" role="tablist">
@@ -55,17 +66,6 @@
         <span class="adot"></span>Restart as admin
       </button>
     {/if}
-    <button
-      class="pill ghost"
-      class:ok={app.updateStatus === "current"}
-      class:bad={app.updateStatus === "failed"}
-      class:upd={app.updateStatus === "available"}
-      aria-label="Version and updates: {updLabel}"
-      title={app.updateStatus === "failed" ? app.updateError : "Check for updates"}
-      onclick={() => app.checkForUpdates(true)}
-    >
-      {#if app.updateStatus === "available"}<span class="udot"></span>{/if}{updLabel}
-    </button>
     <button class="round" title="How Crumbtrail works" onclick={() => app.openWelcome()}>?</button>
     <button class="round theme" aria-label="Toggle theme" title="Toggle theme" onclick={() => app.toggleTheme()}>
       {app.theme === "dark" ? "☀" : "☾"}
@@ -90,6 +90,9 @@
     font-weight: 700;
     font-size: 17px;
     letter-spacing: -0.01em;
+  }
+  .brand .pill {
+    margin-left: 4px;
   }
 
   .tabs {

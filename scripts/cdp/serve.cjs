@@ -379,6 +379,37 @@ async function typeText({ selector, text, key }, target = 'main') {
     return setRes.value;
 }
 
+// This harness drives the REAL app on the real PC. click() refuses labels that would delete files or
+// relaunch elevated (WebView2 150.x won't bind the debug port when elevated, so CDP would die).
+// Opt out with CRUMB_ALLOW_CLEAN=1 on THIS server process when a real clean is the point of the test.
+const DANGER_LABELS = /^(clean now|retry skipped|retrying|restart as admin)/i;
+const ALLOW_DANGER = process.env.CRUMB_ALLOW_CLEAN === '1';
+
+// Selector resolver injected into the page by click(). Besides plain CSS it understands
+//   text=Rescan               visible label (aria-label || text): exact match first, then prefix
+//   tab=Space  menuitem=Games  button=Toggle theme      same, limited to that role/tag
+//   button.drive >> C:        first visible CSS match whose label CONTAINS the text
+// Labels beat class selectors here: they survive restyles and state classes (.on/.cur/.active).
+const RESOLVE_JS = `
+    const resolveEl = (sel) => {
+        const norm = (s) => (s || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+        const label = (e) => norm(e.getAttribute('aria-label') || e.innerText || e.textContent);
+        const visible = (list) => Array.from(list).filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+        const ROLES = { text: 'button, a, summary, [role=tab], [role=menuitem], [role=switch], [role=checkbox]', tab: '[role=tab]', menuitem: '[role=menuitem]', button: 'button' };
+        const m = /^(text|tab|menuitem|button)=(.+)$/s.exec(sel);
+        if (m) {
+            const want = norm(m[2]);
+            const all = visible(document.querySelectorAll(ROLES[m[1]]));
+            return all.find((e) => label(e) === want) || all.find((e) => label(e).startsWith(want)) || null;
+        }
+        const i = sel.indexOf(' >> ');
+        if (i > 0) {
+            const want = norm(sel.slice(i + 4));
+            return visible(document.querySelectorAll(sel.slice(0, i))).find((e) => label(e).includes(want)) || null;
+        }
+        return document.querySelector(sel);
+    };`;
+
 // Real pointer click via the CDP Input domain — dispatches the full
 // mouseMoved→mousePressed→mouseReleased sequence at the element's center, so the
 // page sees genuine pointerdown/mousedown/focus/mouseup/click events (and real
@@ -391,8 +422,13 @@ async function typeText({ selector, text, key }, target = 'main') {
 async function click(selector, target = 'main') {
     const loc = await evalJs(`
         (() => {
-            const el = document.querySelector(${JSON.stringify(selector)});
+            ${RESOLVE_JS}
+            const el = resolveEl(${JSON.stringify(selector)});
             if (!el) return { error: 'selector not found' };
+            const lbl = (el.getAttribute('aria-label') || el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            if (${!ALLOW_DANGER} && new RegExp(${JSON.stringify(DANGER_LABELS.source)}, 'i').test(lbl)) {
+                return { error: 'refused: "' + lbl.slice(0, 40) + '" would run a REAL clean or relaunch the app as admin. Start the cdp server with CRUMB_ALLOW_CLEAN=1 to allow it.' };
+            }
             el.scrollIntoView({ block: 'center', inline: 'center' });
             const r = el.getBoundingClientRect();
             if (!r.width || !r.height) return { error: 'zero-size element' };
@@ -412,7 +448,7 @@ async function click(selector, target = 'main') {
     }
     if (!v.inView) {
         // Off-viewport even after scroll — synthetic click so the action still lands.
-        const fb = await evalJs(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el) return {error:'gone'}; el.click(); return {ok:true}; })()`, 30000, target);
+        const fb = await evalJs(`(() => { ${RESOLVE_JS} const el=resolveEl(${JSON.stringify(selector)}); if(!el) return {error:'gone'}; el.click(); return {ok:true}; })()`, 30000, target);
         return { ok: !fb.value?.error, via: 'js-fallback', reason: 'offscreen', error: fb.value?.error };
     }
     const { x, y, covered, coveredBy } = v;
@@ -447,12 +483,15 @@ async function settleQuiet({ quietMs = 120, maxMs = 1500 } = {}, target = 'main'
     const js = `(() => new Promise((res) => {
         const t0 = performance.now();
         let last = performance.now(), muts = 0;
+        // Finite CSS/Web animations (fade, rise, springs, staggered rows) don't mutate the DOM, so a
+        // quiet DOM alone returns mid-animation and the shot catches a half-faded frame (a phantom bug).
+        const animating = () => document.getAnimations().filter((a) => (a.playState === 'running' || a.playState === 'pending') && a.effect && a.effect.getComputedTiming().iterations !== Infinity).length;
         const mo = new MutationObserver((rs) => { muts += rs.length; last = performance.now(); });
         mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
         const iv = setInterval(() => {
             const now = performance.now();
-            const done = (quiet) => { clearInterval(iv); mo.disconnect(); res({ quiet, waitedMs: Math.round(now - t0), mutations: muts }); };
-            if (now - last >= ${qm}) done(true);
+            const done = (quiet) => { clearInterval(iv); mo.disconnect(); res({ quiet, waitedMs: Math.round(now - t0), mutations: muts, animating: animating() }); };
+            if (now - last >= ${qm} && animating() === 0) done(true);
             else if (now - t0 >= ${mm}) done(false);
         }, 40);
     }))()`;
@@ -749,104 +788,73 @@ async function _screenshotImpl({ format = 'jpeg', quality = 65, clip, selector, 
     return { path: filePath, bytes: buf.length };
 }
 
-// One-shot snapshot of the assistant page state. STORE-TRUTH FIRST (2026-07-14):
-// dev builds expose the live assistant store on window.__assistant (AppShell
-// onMount), so model/streaming/queue/errors/ctx% are read EXACT from state
-// instead of scraped off DOM selector guesses (whose model regex predated
-// Fable and whose streaming check was a class-substring hunch). The DOM scrape
-// stays as fallback, labeled source:"dom" so degraded fidelity is visible.
-async function assistantState(target = 'main') {
+// One-shot snapshot of the app state. STORE-TRUTH FIRST: dev builds expose the live
+// AppStore on window.__crumb (src/lib/app.svelte.ts), so tab/view/popover/sheet, scan
+// flags and every error string are read EXACT instead of scraped off the DOM. No hook
+// (prod build, or not mounted yet) -> DOM scrape, labeled source:"dom" so degraded
+// fidelity is visible. NB: the field is `appError`, not `error` — look() reserves
+// `page.error` for "app unreachable".
+async function appState(target = 'main') {
     const js = `
         (() => {
-            // workspace.svelte.ts stores ACTIVE_KEY as a bare string, not JSON.
-            const workspaceActiveId = localStorage.getItem('rift.ui.workspace.v1');
-            const ta = document.querySelector('.assistant textarea');
             const base = {
-                workspaceActiveId,
                 location: location.pathname,
                 title: document.title,
                 vp: { w: innerWidth, h: innerHeight, dpr: devicePixelRatio },
+                theme: document.documentElement.dataset.theme || null,
             };
-            const A = window.__assistant;
-            if (A) {
+            const S = window.__crumb;
+            if (S) {
                 try {
-                    const t = A.activeTab;
-                    const msgs = (t && t.messages) || [];
-                    let lastPreview = null;
-                    for (let i = msgs.length - 1; i >= 0; i--) {
-                        const m = msgs[i];
-                        if (m.role !== 'assistant') continue;
-                        const txt = (m.blocks || []).filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim();
-                        if (txt) { lastPreview = txt.replace(/\\s+/g, ' ').slice(0, 200); break; }
-                    }
-                    const pill = document.querySelector('.settings-pill .pill-label');
+                    const r = S.spaceResult;
                     return Object.assign(base, {
                         source: 'store',
-                        onAssistant: !!document.querySelector('.assistant'),
-                        streaming: !!(t && t.streaming),
-                        model: (t && (t.modelOverride || t.pinnedModel || t.lastModelId)) || A.model || null,
-                        modelLabel: ((pill && pill.textContent) || '').trim() || null,
-                        permissionMode: A.permissionMode != null ? A.permissionMode : null,
-                        thinkingEnabled: A.thinkingEnabled != null ? A.thinkingEnabled : null,
-                        ctxPct: Math.round((A.ctxPct || 0) * 10) / 10,
-                        bubbleCount: msgs.length,
-                        recentRoles: msgs.slice(-6).map((m) => m.role),
-                        lastError: (t && t.lastError) || null,
-                        activity: (t && t.activity && t.activity.currentLabel) || null,
-                        queueLen: ((t && t.queue) || []).length,
-                        draftChars: ((t && t.draft) || '').length,
-                        textareaValue: (ta && ta.value) || '',
-                        convoTitle: (t && t.convoTitle) || null,
-                        cliSession: ((t && t.cliSessionId) || '').slice(0, 8) || null,
-                        workspaceRoot: (t && t.workspaceRoot) || null,
-                        mcp: ((t && t.mcpServers) || []).map((s) => s.name + ':' + s.status).join(' ') || null,
-                        tabCount: (A.tabs && A.tabs.size != null) ? A.tabs.size : null,
-                        usageTurns: (t && t.sessionUsage && t.sessionUsage.turns) || 0,
-                        lastPreview,
+                        tab: S.tab,
+                        view: S.tab === 'space' && r ? S.view : null,
+                        crumbs: S.view === 'browse' ? S.crumbs.map((c) => c.name) : null,
+                        popover: S.popover,
+                        sheetOpen: S.sheetOpen,
+                        welcomeOpen: S.welcomeOpen,
+                        admin: S.admin,
+                        version: S.version,
+                        update: S.updateStatus,
+                        scanning: S.scanning,
+                        cleaning: S.cleaning,
+                        cleanStep: S.cleaning ? S.cleanStep + '/' + S.cleanTotal : null,
+                        done: S.done,
+                        selected: S.selected.length,
+                        selectedBytes: S.selectedBytes,
+                        spaceScanning: S.spaceScanning,
+                        spaceRoot: S.spaceRoot || null,
+                        spaceLoaded: !!r,
+                        spaceDrive: r ? (r.is_drive ? r.drive : 'folder') : null,
+                        diffLoading: S.diffLoading,
+                        appError: S.error || null,
+                        spaceError: S.spaceError || null,
+                        diffError: S.diffError || null,
+                        scanError: S.scanError ? JSON.stringify(S.scanError).slice(0, 200) : null,
+                        presetNote: S.presetNote ? (S.presetNoteBad ? 'BAD: ' : '') + S.presetNote : null,
                     });
                 } catch (e) { base.storeError = String((e && e.message) || e); }
             }
             // --- DOM fallback (no dev hook, or the store read threw) ---
-            // Stream mode renders assistant turns as .sturn (StreamTurn), not
-            // .bubble — count both or completed replies read as "missing".
-            const bubbles = Array.from(document.querySelectorAll('.bubble, .sturn')).map(b => {
-                const role = b.getAttribute('data-role') || (b.classList.contains('sturn') ? 'assistant' : null);
-                const reasoning = b.querySelector('.reasoning');
-                const text = b.querySelector('.body .content .text');
-                const snarr = Array.from(b.querySelectorAll('.snarr')).map(n => n.textContent).join('\\n');
-                const txt = text?.textContent || snarr || '';
-                return {
-                    role,
-                    reasoningLabel: reasoning?.querySelector('.reasoning-head')?.textContent?.trim() || null,
-                    textChars: txt.length,
-                    textPreview: txt.slice(0, 200) || null,
-                };
-            });
-            // NB: \\b keeps a regex word boundary through the template literal.
-            const modelPill = Array.from(document.querySelectorAll('.settings-pill .pill-label, .head-model'))
-                .find(e => /\\b(Sonnet|Opus|Haiku|Claude|Fable|Mythos|GPT)\\b/.test(e.textContent || ''));
-            const streaming = !!document.querySelector('[data-streaming], .assistant [class*=streaming]');
             return Object.assign(base, {
                 source: 'dom',
-                onAssistant: !!document.querySelector('.assistant'),
-                model: modelPill?.textContent?.trim() || null,
-                textareaValue: ta?.value || '',
-                bubbleCount: bubbles.length,
-                bubbles,
-                streaming,
+                tabs: Array.from(document.querySelectorAll('[role=tab][aria-selected=true]')).map((e) => (e.textContent || '').trim()),
+                dialog: !!document.querySelector('[role=dialog]'),
+                menu: !!document.querySelector('[role=menu]'),
             });
         })()
     `;
     return evalJs(js, 30000, target);
 }
 
-// Generic "where am I" snapshot — works on every workspace, not just chat.
+// Generic "where am I" snapshot.
 async function pageState(target = 'main') {
     return evalJs(`
         (() => {
-            // workspace.svelte.ts stores ACTIVE_KEY as a bare string, not JSON.
-            const workspaceActiveId = localStorage.getItem('rift.ui.workspace.v1');
-            return { workspaceActiveId, pathname: location.pathname, title: document.title, url: location.href, ts: Date.now() };
+            const S = window.__crumb;
+            return { pathname: location.pathname, title: document.title, url: location.href, tab: S ? S.tab : null, view: S ? S.view : null, ts: Date.now() };
         })()
     `, 30000, target);
 }
@@ -1200,7 +1208,7 @@ async function look({ selector, level = 'error', limit = 20, format = 'jpeg', qu
     // Both legs individually guarded: a dead app (ws down) must yield a readable
     // { page: { error } } — not a 500 whose jq render prints nulls.
     const [state, shot] = await Promise.all([
-        assistantState(target).catch(e => ({ error: e.message })),
+        appState(target).catch(e => ({ error: e.message })),
         noShot ? Promise.resolve(null) : screenshot({ selector, format, quality }, target).catch(e => ({ error: e.message })),
     ]);
     const c = consoleLogs({ level, limit }, target);
@@ -1293,7 +1301,7 @@ async function runOp({ op, params = {}, target }, batchTarget = 'main') {
         case 'text': return pageText(params, t);
         case 'key': return pressKey(params, t);
         case 'screenshot': return screenshot(params, t);
-        case 'state': return assistantState(t);
+        case 'state': return appState(t);
         case 'page': return pageState(t);
         case 'console': return consoleLogs(params, t);
         case 'ax': return axTree(params, t);
@@ -1357,7 +1365,7 @@ const routes = {
     'POST /screenshot': async (body, target) => screenshot(body, target),
     'POST /look': async (body, target) => look(body, target),
     'POST /key': async (body, target) => pressKey(body, target),
-    'GET /state': async (body, target) => assistantState(target),
+    'GET /state': async (body, target) => appState(target),
     'GET /page': async (body, target) => pageState(target),
     'GET /console': async (body, target, query) => consoleLogs(query, target),
     'GET /ax': async (body, target, query) => axTree(query, target),
